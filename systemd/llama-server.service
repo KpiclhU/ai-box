@@ -1,0 +1,26 @@
+[Unit]
+Description=llama.cpp server (ai-box local LLM)
+Documentation=https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__AI_HOME__/llama.cpp
+Environment=HOME=__HOME__
+EnvironmentFile=-__CONFIG_DIR__/llama-server.env
+# systemd expands ${MODEL} here (it does NOT expand variables inside EnvironmentFile),
+# and $LLAMA_EXTRA_ARGS is split on whitespace, so extra flags can live in the env file.
+ExecStart=__AI_HOME__/llama.cpp/build/bin/llama-server --model ${MODEL} --host ${HOST} --port ${PORT} $LLAMA_EXTRA_ARGS
+Restart=on-failure
+RestartSec=5
+# Loading a 25 GB model off NVMe into GTT is not instant.
+TimeoutStartSec=1800
+LimitNOFILE=65536
+# Keep the model process alive if something else on the box goes memory-hungry.
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=multi-user.target

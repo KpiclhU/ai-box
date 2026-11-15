@@ -1,0 +1,33 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+bot/.venv/
+.venv/
+
+# model weights and generated data (large, re-downloadable)
+*.gguf
+*.safetensors
+*.ckpt
+*.pth
+*.onnx
+*.sqlite3
+*.sqlite3-journal
+data/
+
+# builds and logs
+*.log
+build/
+build-vulkan/
+comfyui/
+llama.cpp/
+
+# editors / os
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,22 @@
+[Unit]
+Description=ComfyUI (ai-box image generation)
+Documentation=https://docs.comfy.org/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__AI_HOME__/comfyui
+Environment=HOME=__HOME__
+EnvironmentFile=-__CONFIG_DIR__/comfyui.env
+ExecStart=__AI_HOME__/comfyui/.venv/bin/python main.py --listen ${HOST} --port ${PORT} $COMFY_EXTRA_ARGS
+Restart=on-failure
+RestartSec=10
+# Importing torch + ROCm libraries is slow on first start.
+TimeoutStartSec=300
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

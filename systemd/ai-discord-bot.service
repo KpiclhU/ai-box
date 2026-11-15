@@ -1,0 +1,20 @@
+[Unit]
+Description=ai-box Discord bot (local LLM + ComfyUI)
+After=network-online.target llama-server.service comfyui.service
+Wants=network-online.target llama-server.service comfyui.service
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__REPO__
+Environment=HOME=__HOME__
+EnvironmentFile=__REPO__/.env
+ExecStart=__REPO__/bot/.venv/bin/python __REPO__/bot/bot.py
+# Discord has outages and the token can be rotated; always come back.
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
