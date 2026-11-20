@@ -92,7 +92,7 @@ sudo apt update && sudo apt full-upgrade -y
 sudo apt install -y build-essential git cmake ninja-build pkg-config \
     curl wget jq htop pciutils lm-sensors fwupd pipx \
     python3-venv python3-pip \
-    libvulkan-dev vulkan-tools mesa-vulkan-drivers glslc
+    libvulkan-dev vulkan-tools mesa-vulkan-drivers glslc libssl-dev
 pipx ensurepath                       # then log out and back in so `hf` is on PATH
 pipx install "huggingface_hub[cli]"   # used by 60-download-models.sh
 sudo sensors-detect --auto
@@ -100,6 +100,11 @@ sudo sensors-detect --auto
 
 `pciutils` matters on Server — `lspci` is not installed by default, and both the preflight
 script and every GPU diagnosis here start with it.
+
+`libssl-dev` matters for a different reason: `llama-server` downloads GGUFs by itself (the
+`-hf` flag, `POST /models`, and the download buttons in the web UI) with its own HTTPS client.
+Without OpenSSL headers CMake still builds happily, and then every `https://` request from the
+server fails before it leaves the box.
 
 ### Firmware update
 

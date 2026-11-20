@@ -20,6 +20,15 @@ command -v git   >/dev/null || die "git missing: sudo apt install git"
 command -v cmake >/dev/null || die "cmake missing: sudo apt install cmake"
 command -v ninja >/dev/null || command -v make >/dev/null || die "ninja or make required"
 
+# llama-server downloads GGUFs itself (-hf, POST /models, the UI's model manager) with
+# its own HTTPS client. CMake still builds without OpenSSL headers, but the binary then
+# refuses every https:// request and the download dies as "resolves no file to download".
+if ! pkg-config --exists openssl 2>/dev/null && [ ! -f /usr/include/openssl/ssl.h ]; then
+  echo "warning: OpenSSL development headers not found (sudo apt install libssl-dev)." >&2
+  echo "         The build will work, but -hf and web-UI downloads will fail with" >&2
+  echo "         'HTTPS is not supported'. Install them first if you want those." >&2
+fi
+
 case "$BACKEND" in
   rocm|vulkan|both) ;;
   *) die "unknown backend '$BACKEND' (expected rocm, vulkan or both)" ;;
@@ -131,6 +140,7 @@ build() {
   cmake -S "$SRC" -B "$dir" \
     -DCMAKE_BUILD_TYPE=Release \
     -DLLAMA_CURL=OFF \
+    -DLLAMA_OPENSSL=ON \
     -DLLAMA_BUILD_TESTS=OFF \
     "$@"
   say "Building $name ($JOBS jobs)"

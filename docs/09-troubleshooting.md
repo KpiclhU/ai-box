@@ -116,6 +116,50 @@ In order:
 Known `gfx1150/gfx1151` UMA reporting bugs in some Vulkan paths. ROCm is the fallback for
 image models; for llama.cpp, try a newer Vulkan SDK/driver or just use the HIP build.
 
+## Download from the web UI / router fails: `model '…' resolves no file to download`
+
+Not a disk-space or size problem. `llama-router` first asks huggingface.co for the repo's file
+list and picks a file from it; this error means that step came back with nothing to download.
+The reason is logged just above, because the resolution happens while the request is handled:
+
+```bash
+journalctl -u llama-router -n 80 --no-pager | grep -iE 'get_repo|hf_plan|https|gguf'
+```
+
+| Line in the log | Cause | Fix |
+|---|---|---|
+| `HTTPS is not supported. Please rebuild with …` | the build linked no OpenSSL, so every `https://` request fails before a socket is opened | `sudo apt install libssl-dev`, then `./scripts/20-install-llama.sh rocm` |
+| `get_repo_commit: error: GET failed (429)` / `(404)` | Hugging Face throttled the anonymous lookup, or the repo name is not what you think | wait a minute and retry; for gated/rate-limited repos put `HF_TOKEN=…` in `~/.config/ai-box/llama-router.env` and restart |
+| `no GGUF files found in repository …` + `Available GGUF files:` | the `:QUANT` tag matched no file name in that repo | use a tag from the printed list, or download the exact file with the CLI below |
+| nothing at all | no route to huggingface.co, or a proxy between you and it | `curl -sS https://huggingface.co/api/models/<user>/<repo>/refs` — llama.cpp has no proxy support, so a machine that only reaches the internet through one cannot download |
+
+Check the binary in one line:
+
+```bash
+ldd ~/ai/llama.cpp/build/bin/llama-server | grep -i ssl     # libssl.so* means HTTPS is compiled in
+```
+
+The CLI is the dependable path for anything unusual — it resolves the same repo through
+`huggingface_hub` (own TLS, real HTTP errors) and drops the file into `~/ai/models`:
+
+```bash
+./scripts/60-download-models.sh <user>/<repo> '<glob>'
+./scripts/95-models.sh reload
+```
+
+Quote the glob tightly when a repo ships two files per quant. Re-uploaders often put an `MTP`
+variant next to the plain one, and `:Q8_0` resolves to whichever of the two comes first:
+
+```bash
+# DavidAU/…-MAX-MTP-GGUF carries …-MAX-Q8_0.gguf (~30 GB) and …-MAX-MTP-Q8_0.gguf (~30 GB)
+./scripts/60-download-models.sh \
+  DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF \
+  '*-MAX-Q8_0.gguf'
+```
+
+And a 27B at Q8_0 is ~30 GB of the ~48 GiB GTT before any KV cache — it leaves nothing for a
+32k context next to ComfyUI. Q4_K_M or Q6_K is the sane pick here ([07-models.md](07-models.md)).
+
 ## Wi-Fi or Bluetooth disappears
 
 MT7925. `rfkill list`, `sudo modprobe -r mt7925e && sudo modprobe mt7925e`, reboot. Reported
