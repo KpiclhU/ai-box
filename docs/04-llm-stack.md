@@ -48,12 +48,20 @@ hipcc --version
 ```
 
 Ubuntu 26.04 may need the corresponding `ubuntu` repo path instead of `noble`; the ROCm
-compatibility matrix lists 26.04.1 explicitly, so the matching path exists.
+compatibility matrix lists 26.04.1 explicitly, so the matching path exists. If a path 404s,
+browse <https://repo.radeon.com/amdgpu-install/latest/ubuntu/> and use the codename that is
+actually published.
+
+This ROCm install is only needed for the **HIP `llama.cpp` build** (and for `rocminfo` /
+`rocm-smi`). ComfyUI does not need it: the PyTorch `rocm7.2` wheels carry their own ROCm
+user-space libraries and only want the kernel driver plus `/dev/kfd`. So if the ROCm repo is
+fighting you on 26.04, `./scripts/20-install-llama.sh vulkan` plus a normal ComfyUI install
+gives you a working box with no `amdgpu-install` at all — at the cost of some prefill speed.
 
 ## Build llama.cpp
 
 ```bash
-sudo ./scripts/20-install-llama.sh rocm     # or: vulkan
+./scripts/20-install-llama.sh rocm          # or: vulkan — no sudo, it builds into your home
 ```
 
 What it does, so you can do it by hand:
@@ -107,6 +115,21 @@ Loopback only by default. If you want the box reachable from your LAN, put it be
 reverse proxy with auth rather than binding `0.0.0.0`.
 
 ## Wire up the coding tools
+
+### Where the editor runs
+
+On a Server install there is no desktop on the box, so the editor (VS Code, Claude Code,
+opencode, Aider) runs on your laptop while the model runs on the ai-box. Keep the services on
+loopback and forward the ports over SSH:
+
+```bash
+ssh -N -L 8080:127.0.0.1:8080 -L 8188:127.0.0.1:8188 ai@ai-box
+```
+
+Leave that running. `http://127.0.0.1:8080/v1` below then means "port 8080 on the ai-box",
+and `http://127.0.0.1:8188` is ComfyUI in your laptop's browser. This is also why nothing
+binds `0.0.0.0`: there is no port to expose and no auth to get wrong. If you installed the
+Desktop edition and work at the console, skip the tunnel and use the addresses directly.
 
 All of these take an OpenAI-compatible base URL.
 

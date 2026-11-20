@@ -34,7 +34,7 @@ error: hipcc not found. The HIP build needs the ROCm user-space toolchain.
   wget https://repo.radeon.com/amdgpu-install/latest/ubuntu/noble/amdgpu-install_*_all.deb
   sudo apt install -y ./amdgpu-install_*_all.deb
   sudo amdgpu-install -y --usecase=rocm --no-dkms
-  sudo usermod -aG render,video "$USER"     # then log out and back in
+  sudo usermod -aG render,video "$(id -un)"  # then log out and back in
 
 Check the current ROCm install page for your distro's repo path if the URL 404s.
 Then re-run this script, or use the Vulkan backend instead:

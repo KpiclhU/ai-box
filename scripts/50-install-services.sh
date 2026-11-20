@@ -9,7 +9,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET_USER="${SUDO_USER:-$USER}"
+TARGET_USER="${SUDO_USER:-${USER:-$(id -un)}}"
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 AI_HOME="${AI_HOME:-$TARGET_HOME/ai}"
 CONFIG_DIR="$TARGET_HOME/.config/ai-box"

@@ -20,7 +20,7 @@ Alternatives, honestly:
 ## Install
 
 ```bash
-sudo ./scripts/30-install-comfyui.sh
+./scripts/30-install-comfyui.sh      # no sudo: the venv and models live in your home
 ```
 
 By hand, the important part is the wheel index:
@@ -171,3 +171,11 @@ curl -s localhost:8188/system_stats | jq '.devices[0] | {name, vram_total, vram_
 ```
 
 Then use the bot's `/image` or the ComfyUI UI once, and watch `amdgpu_top` for GTT usage.
+
+The UI is at `http://127.0.0.1:8188`. On a Server install there is no browser on the box, so
+forward the port from your laptop and open it there — same tunnel as in
+[04-llm-stack.md](04-llm-stack.md):
+
+```bash
+ssh -N -L 8188:127.0.0.1:8188 ai@ai-box
+```

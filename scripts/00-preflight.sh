@@ -43,10 +43,12 @@ fi
 [ -e /dev/kfd ] && ok "/dev/kfd present" || bad "/dev/kfd missing — amdgpu/KFD did not initialise (ROCm will not work)"
 ls /dev/dri/renderD* >/dev/null 2>&1 && ok "render nodes: $(ls /dev/dri/renderD* | tr '\n' ' ')" || bad "no /dev/dri/renderD* nodes"
 
-if id -nG "$USER" | tr ' ' '\n' | grep -qxE 'render|video'; then
-  ok "$USER is in render/video groups"
+# $USER is not always set (sudo -i, systemd, some SSH setups); ask the kernel instead.
+ME="$(id -un)"
+if id -nG "$ME" | tr ' ' '\n' | grep -qxE 'render|video'; then
+  ok "$ME is in render/video groups"
 else
-  warn "$USER not in render/video — run: sudo usermod -aG render,video $USER (then log out)"
+  warn "$ME not in render/video — run: sudo usermod -aG render,video $ME (then log out)"
 fi
 
 head_ "GPU-addressable memory"
@@ -66,11 +68,45 @@ fi
 grep -q 'ttm.pages_limit' /proc/cmdline && info "cmdline: $(grep -o 'ttm\.[a-z_]*=[0-9]*' /proc/cmdline | tr '\n' ' ')" || info "no ttm.* on kernel cmdline"
 
 head_ "Graphics / compute stack"
+# GUI probes need a session. Over SSH $DISPLAY and $WAYLAND_DISPLAY are unset, so
+# glxinfo fails with "unable to open display" — that says nothing about the GPU.
+# Judge the device from the kernel, and only run GL checks when there is a session.
+if [ -d /sys/class/drm ]; then
+  for card in /sys/class/drm/card[0-9]*; do
+    [ -e "$card/device/vendor" ] || continue
+    vendor=$(cat "$card/device/vendor" 2>/dev/null)
+    device=$(cat "$card/device/device" 2>/dev/null)
+    driver=$(basename "$(readlink -f "$card/device/driver" 2>/dev/null)")
+    if [ "$vendor" = "0x1002" ]; then
+      ok "$(basename "$card"): AMD $vendor:$device driver=${driver:-none}"
+    else
+      info "$(basename "$card"): $vendor:$device driver=${driver:-none}"
+    fi
+  done
+fi
+
+if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+  if command -v glxinfo >/dev/null; then
+    renderer=$(glxinfo -B 2>/dev/null | grep -m1 'OpenGL renderer' | sed 's/.*: *//')
+    [ -n "$renderer" ] && ok "GL renderer: $renderer" || warn "glxinfo ran but reported no renderer"
+  else
+    info "glxinfo not installed (apt install mesa-utils) — optional"
+  fi
+else
+  info "no display session (DISPLAY/WAYLAND_DISPLAY unset) — skipping GL check"
+fi
+
 if command -v vulkaninfo >/dev/null; then
   dev=$(vulkaninfo --summary 2>/dev/null | grep -m1 -i 'deviceName' | sed 's/.*= *//')
-  [ -n "$dev" ] && ok "Vulkan device: $dev" || warn "vulkaninfo found no device"
+  if [ -n "$dev" ]; then
+    ok "Vulkan device: $dev"
+  elif [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+    warn "vulkaninfo found no device"
+  else
+    info "vulkaninfo listed no device without a display session — usually harmless over SSH"
+  fi
 else
-  warn "vulkaninfo not installed (apt install vulkan-tools)"
+  info "vulkaninfo not installed (apt install vulkan-tools)"
 fi
 command -v rocminfo >/dev/null && { rocminfo 2>/dev/null | grep -q gfx1151 && ok "rocminfo sees gfx1151" || warn "rocminfo present but no gfx1151 agent"; } || warn "ROCm not installed (needed for the HIP build and ComfyUI)"
 command -v rocm-smi >/dev/null && ok "rocm-smi present" || info "rocm-smi not present"

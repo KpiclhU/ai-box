@@ -45,7 +45,7 @@ It does **not** fit `gpt-oss-120b` (~59 GB of weights). Don't plan around it.
 
 | Question | Choice | Why |
 |---|---|---|
-| OS | **Ubuntu 26.04 LTS** | On AMD's ROCm compatibility matrix, kernel 7.0 (well past the 6.18.4 Strix Halo fix line), LTS support. Fedora 43 and Bazzite are the alternatives (see [docs/02](docs/02-os-install.md)) |
+| OS | **Ubuntu 26.04 LTS Server** (Desktop is fine too) | On AMD's ROCm compatibility matrix, kernel 7.0 (well past the 6.18.4 Strix Halo fix line), LTS support. Fedora 43 and Bazzite are the alternatives (see [docs/02](docs/02-os-install.md)) |
 | iGPU memory | **512 MB BIOS carve-out + `ttm.pages_limit` ≈ 48 GiB** | AMD's own guidance: a static carve-out buys nothing on Strix Halo and permanently removes RAM from the OS. Large carve-outs also break USB ports after suspend on this board |
 | LLM runtime | **llama.cpp `llama-server` (HIP/ROCm build)** | Best prompt-processing speed for agentic coding; one toolchain shared with ComfyUI. Vulkan build documented as the alternative for higher decode tok/s |
 | Image stack | **ComfyUI in a venv**, PyTorch ROCm wheels | Most reliable path on `gfx1151`; scriptable over HTTP for the bot |
@@ -79,8 +79,11 @@ Time estimates assume you have the parts in hand and a monitor + keyboard.
 
 ### Phase 1 — OS install (45 min)
 
-Ubuntu 26.04 LTS desktop, single ext4 root on the whole 2 TB, zram swap (default), no
-separate swap partition. Then update firmware and verify the kernel.
+Ubuntu 26.04 LTS, single ext4 root on the whole 2 TB, no big swap partition. **The Server
+edition is the better fit here**: every service in this repo is HTTP on loopback, nothing
+needs X or Wayland, and you get ~1–2 GB more RAM for models. Install Desktop instead only
+if you also want a screen and a browser on the box itself. Then update firmware and verify
+the kernel.
 
 ```bash
 uname -r                      # want >= 6.18.4 ; 7.x on 26.04
@@ -105,7 +108,7 @@ belongs. Background and the arithmetic: [docs/03-gpu-memory.md](docs/03-gpu-memo
 ### Phase 3 — LLM + coding assistant (1–2 h, mostly compile time)
 
 ```bash
-sudo ./scripts/20-install-llama.sh rocm          # or: vulkan
+./scripts/20-install-llama.sh rocm               # or: vulkan (no sudo: it builds in your home)
 ./scripts/60-download-models.sh coder-q6         # Qwen3-Coder-30B-A3B, ~25 GB
 sudo ./scripts/50-install-services.sh            # llama-server on 127.0.0.1:8080
 curl -s localhost:8080/health
@@ -116,10 +119,17 @@ Claude Code, opencode, Continue, Cline and Aider are in
 [docs/04-llm-stack.md](docs/04-llm-stack.md). Model picks and sizes:
 [docs/07-models.md](docs/07-models.md).
 
+With a Server install the editor is on your laptop, so forward the port first (leave it
+running):
+
+```bash
+ssh -N -L 8080:127.0.0.1:8080 -L 8188:127.0.0.1:8188 ai@ai-box
+```
+
 ### Phase 4 — Image generation (1–2 h, mostly downloads)
 
 ```bash
-sudo ./scripts/30-install-comfyui.sh
+./scripts/30-install-comfyui.sh                       # again, no sudo — the venv lives in your home
 # put an SDXL checkpoint in ~/ai/comfyui/models/checkpoints/
 sudo ./scripts/50-install-services.sh                 # ComfyUI on 127.0.0.1:8188
 ```
@@ -207,6 +217,7 @@ bot/                          discord.py bot (bot.py, llm.py, comfy.py, store.py
 |---|---|
 | llama-server | `http://127.0.0.1:8080` — `/v1/chat/completions`, `/health`, `/props` |
 | ComfyUI | `http://127.0.0.1:8188` — `/prompt`, `/history/<id>`, `/view` |
+| SSH tunnel (headless box) | `ssh -N -L 8080:127.0.0.1:8080 -L 8188:127.0.0.1:8188 ai@ai-box` |
 | State directory | `~/.config/ai-box/` (env files), `~/ai/` (binaries, models, venvs) |
 | Bot data | `~/ai/data/bot.sqlite3` |
 | RAM budget | ~12–14 GB OS + ~48 GiB GPU-addressable |
