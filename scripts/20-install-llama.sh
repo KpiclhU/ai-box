@@ -26,15 +26,24 @@ case "$BACKEND" in
 esac
 
 if [ "$BACKEND" = "rocm" ] || [ "$BACKEND" = "both" ]; then
-  # ROCm installs hipcc under /opt/rocm/bin, which is not on PATH in every non-login
-  # shell (systemd units, `ssh box cmd`), so check the prefix before giving up.
-  for prefix in "${ROCM_PATH:-}" /opt/rocm; do
-    if [ -n "$prefix" ] && [ -x "$prefix/bin/hipcc" ]; then
-      PATH="$prefix/bin:$PATH"
-      export PATH
+  # Locate a usable ROCm tree. ROCm 10.x installs the real thing under
+  # /opt/rocm/core-<ver>/ and keeps /opt/rocm/{bin,lib,llvm} as update-alternatives,
+  # which can lag behind or still point at an older release.
+  ROCM_ROOT=""
+  for prefix in "${ROCM_PATH:-}" "$(hipconfig -R 2>/dev/null || true)" /opt/rocm/core-* /opt/rocm; do
+    [ -n "$prefix" ] && [ -d "$prefix" ] || continue
+    if [ -x "$prefix/lib/llvm/bin/hipcc" ] || [ -x "$prefix/bin/hipcc" ]; then
+      ROCM_ROOT="$prefix"
       break
     fi
   done
+  # hipcc is not on PATH in every non-login shell (systemd units, `ssh box cmd`).
+  for d in "$ROCM_ROOT/bin" "$ROCM_ROOT/lib/llvm/bin"; do
+    [ -n "$ROCM_ROOT" ] && [ -d "$d" ] && PATH="$d:$PATH"
+  done
+  if [ -n "$ROCM_ROOT" ]; then
+    export PATH ROCM_PATH="$ROCM_ROOT" HIP_PATH="$ROCM_ROOT"
+  fi
 
   if ! command -v hipcc >/dev/null; then
     codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}" || true)"
@@ -62,6 +71,43 @@ Then re-run this script, or use the Vulkan backend instead (no sudo, no ROCm):
 EOF
     exit 1
   fi
+
+  # The HIP runtime alone is not enough: CMake's HIP language support needs
+  # hip-lang-config.cmake, packaged separately from the runtime in ROCm 10.x.
+  hip_lang=""
+  for root in "$ROCM_ROOT" /opt/rocm/core-* /opt/rocm; do
+    [ -n "$root" ] && [ -d "$root" ] || continue
+    for sub in lib lib64; do
+      if [ -f "$root/$sub/cmake/hip-lang/hip-lang-config.cmake" ]; then
+        hip_lang="$root/$sub/cmake/hip-lang/hip-lang-config.cmake"
+        ROCM_ROOT="$root"
+        break 2
+      fi
+    done
+  done
+  if [ -z "$hip_lang" ]; then
+    cat >&2 <<EOF
+error: hipcc is installed but the HIP CMake package is not.
+
+CMake stops with "The ROCm root directory ... does not contain the HIP runtime CMake
+package" when hip-lang-config.cmake is absent. On ROCm 10.x that file ships in a
+separate development package, which 'amdgpu-install --usecase=rocm' can leave out;
+the ROCm path in the error is correct, the package is missing.
+
+  apt-cache search '^amdrocm' | grep -E 'dev|devel'
+  sudo apt install amdrocm-core-dev<version>-gfx1151    # name from the search above
+  ls /opt/rocm/core-*/lib/cmake/hip-lang/hip-lang-config.cmake    # must exist
+
+Looked in ${ROCM_ROOT:-/opt/rocm} and /opt/rocm/core-*.
+If an older ROCm is still installed, /opt/rocm/bin,lib,llvm may be stale alternatives:
+  update-alternatives --display rocm-lib
+
+The Vulkan backend needs none of this:
+  ./scripts/20-install-llama.sh vulkan
+EOF
+    exit 1
+  fi
+  echo "ROCm root: $ROCM_ROOT"
 fi
 
 if [ "$BACKEND" = "vulkan" ] || [ "$BACKEND" = "both" ]; then
@@ -95,7 +141,8 @@ build() {
 }
 
 if [ "$BACKEND" = "rocm" ] || [ "$BACKEND" = "both" ]; then
-  build rocm "$SRC/build" -DGGML_HIP=ON -DAMDGPU_TARGETS=gfx1151
+  build rocm "$SRC/build" -DGGML_HIP=ON -DAMDGPU_TARGETS=gfx1151 \
+    -DCMAKE_PREFIX_PATH="$ROCM_ROOT" -DCMAKE_HIP_COMPILER_ROCM_ROOT="$ROCM_ROOT"
 fi
 
 if [ "$BACKEND" = "vulkan" ] || [ "$BACKEND" = "both" ]; then

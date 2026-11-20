@@ -66,6 +66,36 @@ wget -qO- https://repo.radeon.com/amdgpu-install/latest/ubuntu/   # jammy/ noble
 The compatibility matrix lists Ubuntu 26.04.1 with kernel 7.0 for `gfx1151` explicitly, under
 current ROCm (10.x) as well as under the 7.x releases the PyTorch wheels use.
 
+### ROCm 10.x split the layout
+
+10.x puts the real tree in `/opt/rocm/core-<ver>/` and exposes `/opt/rocm/{bin,lib,llvm}` as
+`update-alternatives`. So a build can fail like this:
+
+```text
+The ROCm root directory: /opt/rocm/core-10.2/lib/llvm/bin/../../..
+does not contain the HIP runtime CMake package
+```
+
+That path is **correct**. The error means `hip-lang-config.cmake` is missing, and in 10.x it
+ships in a development package separate from the runtime — `amdgpu-install --usecase=rocm`
+does not always pull it:
+
+```bash
+apt-cache search '^amdrocm' | grep -E 'dev|devel'
+sudo apt install amdrocm-core-dev10.2-gfx1151     # exact name/version from the search
+ls /opt/rocm/core-10.2/lib/cmake/hip-lang/hip-lang-config.cmake
+```
+
+When both the runtime and the dev package are present, `/opt/rocm` itself is usually fine
+(`hipconfig -R` reports the root). If an older ROCm is still installed, check that the
+alternatives actually point at 10.x with `update-alternatives --display rocm-lib`, and pin the
+root explicitly when building:
+
+```bash
+export ROCM_PATH=/opt/rocm/core-10.2 HIP_PATH=/opt/rocm/core-10.2
+./scripts/20-install-llama.sh rocm     # detects core-<ver> and passes the root to CMake
+```
+
 This ROCm install is only needed for the **HIP `llama.cpp` build** (and for `rocminfo` /
 `rocm-smi`). ComfyUI does not need it: the PyTorch `rocm7.2` wheels carry their own ROCm
 user-space libraries and only want the kernel driver plus `/dev/kfd`. So if the ROCm repo is
