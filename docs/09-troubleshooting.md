@@ -110,6 +110,34 @@ In order:
 3. Compare backends: `./scripts/90-bench.sh` (HIP vs Vulkan). Vulkan often wins decode.
 4. Check GTT: a model partially in GTT and partially in RAM runs at RAM speed.
 5. Check you are not running a second model or a Flux job at the same time.
+6. Do the arithmetic before hunting a bug: ~220 GB/s ÷ model size in GB ≈ ceiling tok/s.
+   A 24 GB Q6_K at 10 tok/s *is* the hardware — see the next section.
+
+## A 27B dense model tops out near 10 tok/s — that is the bus, not a bug
+
+Decode reads every weight the token touches, so 220 GB/s ÷ 24 GB ≈ 9 tok/s. Nothing is
+disabled and unified memory has no setting to enable. What is usually missing is
+**speculative decoding**, which many Qwen3.8-27B GGUFs can do with no second model:
+
+```bash
+head -c 64000000 ~/ai/models/model.gguf | strings -n 8 | grep -c nextn   # MTP head present?
+~/ai/llama.cpp/build/bin/llama-server --help | grep -c spec-type         # build supports it?
+```
+
+If both are non-zero, add `--spec-type draft-mtp --spec-draft-n-max 3` to `LLAMA_EXTRA_ARGS`
+and restart. Measured on this chip at Q6_K: **8.4 → 18.7 tok/s** at ~65 % draft acceptance,
+for ~4–8 % prefill. Details and caveats: [04-llm-stack.md](04-llm-stack.md#speculative-decoding-the-one-flag-that-doubles-a-dense-model).
+
+A repo's plain `-Q6_K` file usually has the head pruned while its `-MTP-Q6_K` sibling keeps it.
+If `grep -c nextn` prints 0, take the flag back out: the server warns
+`model doesn't contain MTP layers` and exits with `failed to create MTP context`.
+
+Three things that look like speed levers and are not:
+
+- **Bigger `-c`.** This hybrid keeps decode flat from 16k to 250k; more context only costs memory.
+- **Bigger `-ub`.** Prefill only, and slightly worse with the MTP head loaded.
+- **`--spec-draft-n-max` above 3.** n=4 reported halving throughput at the same acceptance,
+  because the verification batch drops off the fast mat-vec path.
 
 ## Vulkan build: `vk::OutOfDeviceMemoryError`, or UMA reports 0 MB free
 

@@ -171,6 +171,7 @@ documented ones, so treat 64 GB results as "same or slightly lower".
 |---|---|---|
 | Qwen3-Coder-30B-A3B Q6_K | ~61–75 tok/s decode, ~1.1–1.25k tok/s prefill | HIP wins prefill, Vulkan wins decode on the same build |
 | Qwen3-30B-A3B Q4_K_M | ~66–86 tok/s decode | The everyday chat model |
+| Qwen3.8-27B Q6_K (dense hybrid) | ~8–9 tok/s plain, **~19 with MTP** | Its `nextn` draft head is off by default; one flag, ~2× — [docs/04](docs/04-llm-stack.md#speculative-decoding-the-one-flag-that-doubles-a-dense-model) |
 | Llama-3.1-70B Q4_K_M | ~5 tok/s decode | Fits, but slow and leaves little room |
 | gpt-oss-120b MXFP4 | ~51–55 tok/s | **Not viable on 64 GB** — listed to show what you are not missing |
 | SDXL 1024², 25 steps | ~15–25 s/image | ~10 GB |

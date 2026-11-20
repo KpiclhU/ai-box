@@ -14,10 +14,25 @@ Rule of thumb for a 32k-context Q4/Q6 model: **weights + 3–6 GB** of overhead.
 | Devstral-Small (24B) | dense | ~14 GB (Q4) | Good agentic behaviour, ~3–5× slower per token |
 | gpt-oss-20b | MoE, MXFP4 | ~12 GB | Fast, decent general coding, less precise on big refactors |
 | Qwen3-32B | dense | ~20 GB | Better reasoning per token, ~10 tok/s — for thinking, not iterating |
+| Qwen3.8-27B (hybrid) | dense-ish 27B | ~24 GB (Q6_K) | ~8–9 tok/s plain, **~19 with MTP** — see below |
 
 Why MoE: a 30B-A3B activates ~3B parameters per token, so it runs at dense-7B speeds while
 carrying 30B knowledge. On a 256 GB/s memory bus that is the difference between a usable
 assistant and a coffee break.
+
+### Hybrid 27B quants are build- and file-sensitive
+
+Qwen3.8-27B (and its 3.6/3.7 siblings) is a hybrid: 65 blocks, only 16 of them full attention,
+with Gated DeltaNet/SSM layers between. Three things follow:
+
+- **Use a current build.** Roughly pre-`b10450` builds corrupt output around the DeltaNet
+  layers; the quant looks broken and is not.
+- **Prefer the `-MTP-` file.** Re-uploaders ship `…-Q6_K.gguf` (23.6 GB) next to
+  `…-MTP-Q6_K.gguf` (24 GB) and sometimes `…-LOW-MTP-…`. Only files carrying `blk.64.nextn.*`
+  can do speculative decoding, which is worth ~2× decode on a single request
+  ([04-llm-stack.md](04-llm-stack.md#speculative-decoding-the-one-flag-that-doubles-a-dense-model)).
+- **Context is nearly free.** Decode does not degrade from 16k to 250k on this architecture, so
+  size `-c` for the memory it costs, not for speed.
 
 ## Chat / general
 

@@ -158,6 +158,59 @@ llama-server \
 Loopback only by default. If you want the box reachable from your LAN, put it behind a
 reverse proxy with auth rather than binding `0.0.0.0`.
 
+## Speculative decoding: the one flag that doubles a dense model
+
+Decode is bandwidth bound: roughly 220 GB/s divided by the bytes of weights read per token.
+A 27B at Q6_K is 24 GB, so **~9 tok/s is the ceiling**, not a misconfiguration — unified
+memory has no toggle to turn on. What is often switched off is the model's own draft head.
+
+Some Qwen3.8-27B GGUFs carry a **NextN / MTP head** — one extra block stored as
+`blk.64.nextn.*` (`qwen35.nextn_predict_layers = 1` in the metadata). It guesses the next few
+tokens so the full model can verify 3–4 of them in a single weight read. No second model, no
+visible quality change: rejected guesses cost time, never correctness.
+
+Check both halves before you bother:
+
+```bash
+head -c 64000000 ~/ai/models/model.gguf | strings -n 8 | grep -c nextn   # >0: head present
+~/ai/llama.cpp/build/bin/llama-server --help | grep -c spec-type         # >0: build supports it
+```
+
+Then add the flags to `LLAMA_EXTRA_ARGS` and restart:
+
+```bash
+# ~/.config/ai-box/llama-server.env
+LLAMA_EXTRA_ARGS="--ctx-size 32768 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2 --alias local --spec-type draft-mtp --spec-draft-n-max 3"
+```
+
+Measured on `gfx1151`, single request, Qwen3.8-27B Q6 (~24 GB):
+
+| Mode | decode | draft acceptance |
+|---|---|---|
+| plain | 8.4 tok/s | — |
+| `--spec-type draft-mtp --spec-draft-n-max 3` | **18.7 tok/s** | 65 % |
+
+Four caveats:
+
+- **Version.** MTP landed in mid-2026; older builds do not have `--spec-type` at all. The
+  hybrid Qwen3.8 family also wants a build from about `b10450` on, because earlier ones
+  produced corrupted output around the Gated DeltaNet layers.
+- **Prefill pays ~4–8 %** for the extra head, and it costs a fraction of a GB of GTT.
+- **`n=3` is the sweet spot here.** `n=4` has been reported to halve throughput at unchanged
+  acceptance on this chip. Do not raise it without measuring.
+- **It only wins while the GPU is idle.** Each additional concurrent request reuses the same
+  weight read, so plain throughput keeps climbing while MTP's stays flat: at four parallel
+  requests MTP is ~22 % *slower*. Interactive use with `--parallel 2` is the good case.
+
+If the file has no `nextn` tensors there is nothing to draft from: `llama-server` warns
+`model doesn't contain MTP layers` and exits at load, so gate the flag on the check above.
+That is the difference between a repo's `-MTP-` and plain files, which are often only a few
+hundred MB apart ([07-models.md](07-models.md)).
+
+Put these flags in `llama-server.env`, not `llama-router.env`: the router passes its
+`LLAMA_EXTRA_ARGS` to **every** model it can load, so one MTP-less GGUF in `MODELS_DIR` would
+take the whole router down.
+
 ## Wire up the coding tools
 
 ### Where the editor runs
