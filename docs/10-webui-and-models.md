@@ -41,53 +41,51 @@ exposing them raw means anyone on the network can drive your box — and if MCP 
 
 Two sane ways out.
 
-### Reverse proxy with a password (LAN only)
+### Proxying from a Caddy on another machine
+
+The box has no authentication of its own, so the proxy authenticates — on whichever machine
+already runs Caddy:
 
 ```bash
-sudo ./scripts/80-lan-access.sh --password 'a long passphrase'
+sudo ./scripts/80-lan-access.sh --proxy 192.168.1.10
 ```
 
-llama-server and ComfyUI stay on loopback; Caddy listens on the LAN and asks for a password
-first:
+`--proxy` is the Caddy host's IP (or a CIDR). ai-box installs no proxy and keeps no
+`Caddyfile` of its own. The script:
 
+1. sets `HOST=0.0.0.0` in `llama-server.env`/`llama-router.env` and `comfyui.env`, then
+   restarts whichever llama unit is running plus ComfyUI;
+2. writes the site blocks for the Caddy box to `~/.config/ai-box/caddy-ai-box.caddy`;
+3. adds ufw rules letting **only** `--proxy`'s address reach 8080/8188.
+
+Then, on the Caddy box:
+
+```bash
+scp ai-user@ai-box:~/.config/ai-box/caddy-ai-box.caddy /etc/caddy/caddy-ai-box.caddy
+# add one line to its Caddyfile:  import /etc/caddy/caddy-ai-box.caddy
+sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy
 ```
-http://ai-box:8090      llama.cpp chat UI, /v1 API, /models
-http://ai-box:8190      ComfyUI
-```
 
-**An existing Caddy is reused, not replaced.** The site blocks go into
-`/etc/caddy/ai-box.caddy` and one `import` line is added to your `Caddyfile` — nothing else in
-it is rewritten, and Caddy is *reloaded* rather than restarted, so your other sites keep
-serving. Only if no Caddy is found at all does the script `apt install` one (and then it
-creates a minimal `Caddyfile` with global options; the snippet deliberately holds no global
-options, since they may appear only once per config).
+The published URLs are `http://<caddy-box>:8090` and `http://<caddy-box>:8190`, or pass
+`--hostnames ai.example.com comfy.example.com` to use names whose DNS points at the Caddy box —
+Caddy then gets certificates automatically and you get HTTPS. Other flags: `--user`,
+`--password`, `--proxy-ports 8090 8190`, `--ai-ip` (when `hostname -I` picks the wrong
+interface), `--dry-run`, `--revert`.
 
-Flags: `--user`, `--password`, `--ports 8090 8190`, `--hostnames ai.lan comfy.lan` (for names
-your Caddy already holds certificates for — then no new ports are opened at all),
-`--dry-run` (print the snippet and the import line, change nothing), `--remove` (strip the
-import and delete the snippet).
+What to know:
 
-What the script does to stay out of your way:
-
-- **Validates before applying.** `caddy validate` must pass, and on failure the `import` line
-  is rolled back and the snippet deleted, leaving your `Caddyfile` byte-identical.
-- **Bare-port mode needs 8090/8190 free** (WebSocket included for ComfyUI). If something
-  already listens there it refuses to touch anything, so pass `--ports` or use `--hostnames`.
-- **Retries the directive spelling.** Caddy 2.8 renamed `basicauth` to `basic_auth`; the
-  script picks by version and re-renders if validation disagrees.
-- **`--remove` is surgical.** It deletes the two lines it added rather than restoring a stale
-  backup, so edits you made later survive.
-
-Caveats worth reading before you rely on it:
-
-- **Plain HTTP.** Basic auth sends the password base64-encoded, not encrypted. Fine on a home
-  LAN you control; not fine on a shared or café network. `--hostnames` with a name your Caddy
-  already serves over TLS fixes that, as does `tls internal` plus installing Caddy's root CA.
-- **Never port-forward these.** For access from outside, run WireGuard or Tailscale and reach
-  `ai-box` over the tunnel/VPN; Caddy is for the LAN.
-- **The bot is unaffected.** It talks to `127.0.0.1:8080` directly and never goes through
-  Caddy.
-- **Cost is one vhost**, a few MB of RAM in the Caddy process you already run.
+- **The ufw rules are the security boundary.** Nothing on ai-box authenticates, so if ufw is
+  inactive the ports are open to your whole LAN; the script says so and prints the rules to
+  add. `--revert` puts the env files back on `127.0.0.1` and deletes the snippet.
+- **The bcrypt hash is generated here** from `caddy`, `htpasswd` or python-bcrypt if any is
+  present. If none is, the snippet contains `__BCRYPT_HASH__` and the script tells you to run
+  `caddy hash-password` on the Caddy box and paste the result over both occurrences.
+- **Credentials live on the Caddy box**, in that one file; keep it out of any repo you
+  publish.
+- **Caddy adds `X-Forwarded-For` itself**, so the `/v1` API needs no extra headers.
+- **Never port-forward 8080/8188.** Only the Caddy box should reach them, and only its
+  80/443 should face outward.
+- **The bot is unaffected** — it keeps talking to `127.0.0.1:8080`.
 
 ### VPN instead of opening ports
 
