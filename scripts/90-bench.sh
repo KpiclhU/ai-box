@@ -31,15 +31,18 @@ fi
   exit 1
 }
 
-# A running llama-server already holds the model in GTT, so a second copy will fail to
-# allocate even though "Total VRAM" is reported as the full GTT limit.
-if [ "${BENCH_ALLOW_BUSY:-0}" != "1" ] && command -v systemctl >/dev/null 2>&1 \
-   && systemctl is-active --quiet llama-server 2>/dev/null; then
-  echo "llama-server is running and holds the model in GPU memory." >&2
-  echo "  stop it first:  sudo systemctl stop llama-server" >&2
-  echo "  start it again: sudo systemctl start llama-server" >&2
-  echo "  measure anyway: BENCH_ALLOW_BUSY=1 $0" >&2
-  exit 1
+# A running server already holds a model in GTT, so a second copy will fail to allocate
+# even though "Total VRAM" is reported as the full GTT limit.
+if [ "${BENCH_ALLOW_BUSY:-0}" != "1" ] && command -v systemctl >/dev/null 2>&1; then
+  for unit in llama-server llama-router; do
+    if systemctl is-active --quiet "$unit" 2>/dev/null; then
+      echo "$unit is running and holds a model in GPU memory." >&2
+      echo "  stop it first:  sudo systemctl stop $unit" >&2
+      echo "  start it again: sudo systemctl start $unit" >&2
+      echo "  measure anyway: BENCH_ALLOW_BUSY=1 $0" >&2
+      exit 1
+    fi
+  done
 fi
 
 PP="${PP:-512}"
