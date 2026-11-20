@@ -160,6 +160,86 @@ does nothing for servers running on this box.
 Cost: each MCP tool schema goes into the prompt, and each call is tokens. Three servers is
 pleasant; fifteen makes a 30B model worse at its actual job.
 
+### ComfyUI: let the router draw
+
+`scripts/comfy-mcp.py` is an MCP server for ComfyUI that ships with this repo: stdlib only,
+no `mcp` SDK, no venv, nothing to download at boot. That matters because llama-server starts
+every MCP server once at startup and again on each model load — an `npx`/`uvx` server pays a
+registry round-trip each time, this one starts in milliseconds.
+
+Tools it exposes (`comfyui_*` once llama.cpp namespaces them):
+
+| Tool | What it does |
+|---|---|
+| `generate_image` | Queues the repo's SDXL graph, waits, returns the PNG path, a `/view` URL and a markdown image line |
+| `list_models` | Checkpoints and diffusion models ComfyUI can actually load right now |
+| `status` | Device, free/total memory, queue depth |
+| `free_memory` | `POST /free` — drop cached weights before the LLM needs the room |
+
+```bash
+chmod +x ~/ai-box/scripts/comfy-mcp.py
+mkdir -p ~/.config/ai-box
+cat > ~/.config/ai-box/mcp.json <<'JSON'
+{
+  "mcpServers": {
+    "comfyui": {
+      "command": "/usr/bin/python3",
+      "args": ["/home/ai-user/ai-box/scripts/comfy-mcp.py"],
+      "env": { "COMFY_URL": "http://127.0.0.1:8188" }
+    }
+  }
+}
+JSON
+```
+
+Then add one flag to `LLAMA_EXTRA_ARGS` in the env file of the unit you are **actually**
+running. The router reads `llama-router.env`; `llama-server.env` is ignored while
+`llama-router.service` owns the port:
+
+```
+# ~/.config/ai-box/llama-router.env
+LLAMA_EXTRA_ARGS="--ctx-size 131072 --cache-type-k q8_0 --cache-type-v q8_0 \
+  --n-gpu-layers 999 --flash-attn on --jinja --parallel 2 \
+  --mcp-servers-config /home/ai-user/.config/ai-box/mcp.json"
+```
+
+It has to be one line in the file — the unit splits this string on whitespace, so the `\`
+above is just how it is printed here.
+
+```bash
+sudo systemctl restart llama-router
+curl -s localhost:8080/tools | head -40    # comfyui_generate_image must be listed
+journalctl -u llama-router -n 40 --no-pager | grep -i mcp
+```
+
+What is different in router mode:
+
+- **Every model gets the tools.** `LLAMA_EXTRA_ARGS` is passed to each model instance, so the
+  image tools follow whichever GGUF you load. Harmless — unlike `--spec-type draft-mtp`, a
+  tool config cannot stop a model from loading; it costs prompt tokens and nothing else.
+- **`/tools` is empty until a model is loaded.** The router spawns its children when it loads
+  a model, and it loads on the first request. Send a chat message, then check again.
+- **The image is written by ComfyUI, not by this server.** `SaveImage` puts it in
+  `~/ai/comfyui/output/` (prefix `chat_`), and the tool returns that path plus
+  `http://127.0.0.1:8188/view?...`. Open it through the tunnel you already have
+  (`-L 8188:127.0.0.1:8188`) and the markdown line in the reply renders the picture.
+- **Ask in plain language:** *“draw a corgi astronaut, cinematic lighting”*. SDXL takes
+  15–25 s; the model sits in the tool call until then, which is expected, not a hang.
+- **Tool-call timeouts.** Some builds cap a single MCP call. SDXL and Flux-schnell finish well
+  inside any sane cap; a 20-step Flux.1-dev job may not — run those from
+  `scripts/97-comfy-gen.sh` instead.
+- **Memory.** SDXL (~10 GB) fits alongside a 25 GB model in the 48 GiB pool. Flux.1-dev
+  (~34 GB) does not: `./scripts/95-models.sh unload <model>` first, or call the
+  `comfyui_free_memory` tool between jobs.
+- **Keep `HOST=127.0.0.1`.** With tools enabled, llama.cpp refuses a non-loopback bind unless
+  you pass `--allow-unauthenticated-tools`, which turns "use my model" into "run code and
+  read files on this box" for anyone who reaches the port. If you set up Caddy through
+  `80-lan-access.sh`, either drop the MCP flag or keep the LLM loopback-only and proxy
+  ComfyUI alone.
+
+Override the defaults with `env` entries in `mcp.json`: `COMFY_URL`, `COMFY_WORKFLOW`
+(any API-format graph), `COMFY_CHECKPOINT`, `COMFY_PREFIX`, `COMFY_TIMEOUT` (default 900 s).
+
 ## Model management: router mode
 
 The default unit serves exactly one model, named by `MODEL=` in

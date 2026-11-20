@@ -211,6 +211,7 @@ scripts/
   95-models.sh                list/load/unload/download models via the router
   96-comfy-models.sh          list/download/delete ComfyUI models, free its GTT
   97-comfy-gen.sh             one image through ComfyUI — also Llama Chat's "draw" tool
+  comfy-mcp.py                stdio MCP server: image generation as a model tool
 systemd/
   llama-server.service        :8080, one model
   llama-router.service        :8080, every GGUF in ~/ai/models (alternatives to each other)
@@ -227,6 +228,7 @@ bot/                          discord.py bot (bot.py, llm.py, comfy.py, store.py
 | llama-server | `http://127.0.0.1:8080` — also the built-in chat UI, with MCP tools |
 | llama-server API | `/v1/chat/completions`, `/health`, `/props`, `/tools` |
 | ComfyUI | `http://127.0.0.1:8188` — `/prompt`, `/history/<id>`, `/view` |
+| ComfyUI over MCP | `mcp.example.json` → `~/.config/ai-box/mcp.json`, then `--mcp-servers-config` in `LLAMA_EXTRA_ARGS` |
 | SSH tunnel (headless box) | `ssh -N -L 8080:127.0.0.1:8080 -L 8188:127.0.0.1:8188 ai@ai-box` |
 | Through your Caddy | `sudo ./scripts/80-lan-access.sh --proxy 192.168.1.10` → `~/.config/ai-box/caddy-ai-box.caddy` |
 | State directory | `~/.config/ai-box/` (env files), `~/ai/` (binaries, models, venvs) |

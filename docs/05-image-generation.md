@@ -205,7 +205,26 @@ tool and no image-backend flag; its built-in tools are only `read_file`, `file_g
 `grep_search`, `exec_shell_command`, `write_file`, `edit_file` and `get_info`. Two ways to
 close the loop, and they are not exclusive:
 
-**1. Let the model run the CLI.** Give the server the shell tool, and `97-comfy-gen.sh` becomes
+**1. Give llama-server an MCP tool.** `scripts/comfy-mcp.py` is a stdio MCP server (stdlib
+only, no SDK, no venv) that exposes `generate_image`, `list_models`, `status` and
+`free_memory`. Point the unit at it and the model draws as a normal tool call, with no shell
+access at all:
+
+```
+# ~/.config/ai-box/llama-router.env   (or llama-server.env for the single-model unit)
+LLAMA_EXTRA_ARGS="... --parallel 2 --mcp-servers-config /home/ai-user/.config/ai-box/mcp.json"
+```
+
+```bash
+cp mcp.example.json ~/.config/ai-box/mcp.json    # the comfyui entry is already in it
+chmod +x ~/ai-box/scripts/comfy-mcp.py
+sudo systemctl restart llama-router && curl -s localhost:8080/tools
+```
+
+Setup detail, the router gotchas and the timeouts:
+[10-webui-and-models.md](10-webui-and-models.md#comfyui-let-the-router-draw).
+
+**2. Let the model run the CLI.** Give the server the shell tool, and `97-comfy-gen.sh` becomes
 the model's "draw" action:
 
 ```
@@ -225,7 +244,7 @@ prompt, `-W`/`-H` (rounded to multiples of 8), `--steps`, `-c` cfg, `--seed`, `-
 `-o` output dir. It uses `COMFY_WORKFLOW` (default `bot/workflows/sdxl.api.json`) and resolves
 nodes by class type, so a re-exported graph still works.
 
-**2. Use a front end that has an image tool.** Open WebUI's built-in *Image Generation* supports
+**3. Use a front end that has an image tool.** Open WebUI's built-in *Image Generation* supports
 ComfyUI directly: admin → Settings → Images → engine `ComfyUI`, base URL `http://127.0.0.1:8188`,
 and an **API-format** workflow (ComfyUI: gear → *Enable Dev mode Options* → *Save (API Format)*),
 with node ids mapped for prompt, steps and seed. The image lands inline in the conversation.
