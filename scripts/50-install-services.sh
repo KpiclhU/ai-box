@@ -36,7 +36,7 @@ if [ ! -f "$LLAMA_ENV" ]; then
 MODEL=$MODEL
 HOST=127.0.0.1
 PORT=8080
-LLAMA_EXTRA_ARGS=--ctx-size 32768 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2 --alias local
+LLAMA_EXTRA_ARGS="--ctx-size 32768 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2 --alias local"
 EOF
     echo "wrote $LLAMA_ENV (model: $(basename "$MODEL"))"
   else
@@ -47,7 +47,7 @@ EOF
 MODEL=
 HOST=127.0.0.1
 PORT=8080
-LLAMA_EXTRA_ARGS=--ctx-size 32768 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2 --alias local
+LLAMA_EXTRA_ARGS="--ctx-size 32768 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2 --alias local"
 EOF
     echo "wrote $LLAMA_ENV (no model yet — service will not be started)"
   fi
@@ -67,7 +67,7 @@ FLASH_ATTENTION_TRITON_AMD_ENABLE=1
 PYTORCH_ALLOC_CONF=expandable_segments:True
 HOST=127.0.0.1
 PORT=8188
-COMFY_EXTRA_ARGS=--use-pytorch-cross-attention
+COMFY_EXTRA_ARGS="--use-pytorch-cross-attention"
 EOF
   echo "wrote $COMFY_ENV"
 else

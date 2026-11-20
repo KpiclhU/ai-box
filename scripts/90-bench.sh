@@ -15,8 +15,15 @@ ENV_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/ai-box/llama-server.env"
 
 MODEL="${1:-${MODEL:-}}"
 if [ -z "$MODEL" ] && [ -f "$ENV_FILE" ]; then
-  # shellcheck disable=SC1090
-  MODEL="$(. "$ENV_FILE" && echo "${MODEL:-}")"
+  # Read just MODEL= instead of sourcing the file: it also holds values with spaces
+  # (LLAMA_EXTRA_ARGS="--ctx-size 32768 ...") that must not be executed by a shell.
+  MODEL="$(sed -n 's/^[[:space:]]*MODEL=//p' "$ENV_FILE" | head -n 1)"
+  MODEL="${MODEL%$'\r'}"
+  MODEL="${MODEL%\"}"; MODEL="${MODEL#\"}"
+  MODEL="${MODEL%\'}"; MODEL="${MODEL#\'}"
+  case "$MODEL" in
+    '~/'*) MODEL="$HOME/${MODEL#\~/}" ;;
+  esac
 fi
 [ -n "$MODEL" ] && [ -f "$MODEL" ] || {
   echo "usage: $0 /path/to/model.gguf    (or set MODEL in $ENV_FILE)" >&2

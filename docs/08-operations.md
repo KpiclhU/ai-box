@@ -31,7 +31,10 @@ Configuration lives in environment files, not in the units:
 
 To change models, edit `MODEL=` (an absolute path, no spaces) and
 `systemctl restart llama-server`. `LLAMA_EXTRA_ARGS` is split on whitespace by systemd,
-so it is the place for flags like `--ctx-size` and `--parallel`. Note that systemd does
+so it is the place for flags like `--ctx-size` and `--parallel`. Keep such values quoted
+(`LLAMA_EXTRA_ARGS="--ctx-size 32768 ..."`, as the installer writes them): systemd strips
+the quotes, while a shell that reads the file — `./scripts/90-bench.sh` used to source it —
+would otherwise try to run `32768` as a command. Note that systemd does
 **not** expand variables inside `EnvironmentFile` values — only `${VAR}` references in the
 unit's `ExecStart` are expanded, which is why `MODEL` is referenced there.
 
