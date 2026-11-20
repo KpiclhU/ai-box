@@ -109,7 +109,8 @@ belongs. Background and the arithmetic: [docs/03-gpu-memory.md](docs/03-gpu-memo
 
 ```bash
 ./scripts/20-install-llama.sh rocm               # or: vulkan (no sudo: it builds in your home)
-./scripts/60-download-models.sh coder-q6         # Qwen3-Coder-30B-A3B, ~25 GB
+hf download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF \
+  --include '*Q6_K*' --local-dir ~/ai/models     # Qwen3-Coder-30B-A3B, ~25 GB
 sudo ./scripts/50-install-services.sh            # llama-server on 127.0.0.1:8080
 curl -s localhost:8080/health
 ```
@@ -130,7 +131,8 @@ ssh -N -L 8080:127.0.0.1:8080 -L 8188:127.0.0.1:8188 ai@ai-box
 
 ```bash
 ./scripts/30-install-comfyui.sh                       # again, no sudo — the venv lives in your home
-./scripts/60-download-models.sh sdxl                  # 7 GB checkpoint, straight into models/checkpoints
+./scripts/96-comfy-models.sh download stabilityai/stable-diffusion-xl-base-1.0 \
+  'sd_xl_base_1.0.safetensors' checkpoints            # 7 GB checkpoint
 ./scripts/96-comfy-models.sh                          # what is on disk, by folder, with sizes
 sudo ./scripts/50-install-services.sh                 # ComfyUI on 127.0.0.1:8188
 ```
@@ -206,9 +208,7 @@ scripts/
   40-install-bot.sh           venv + bot deps
   50-install-services.sh      renders + installs systemd units
   80-lan-access.sh            serves both UIs to a Caddy running on another box
-  60-download-models.sh       HF downloads, named presets
   90-bench.sh                 llama-bench, both backends if present
-  95-models.sh                list/load/unload/download models via the router
   96-comfy-models.sh          list/download/delete ComfyUI models, free its GTT
   97-comfy-gen.sh             one image through ComfyUI — also Llama Chat's "draw" tool
   comfy-mcp.py                stdio MCP server: image generation as a model tool

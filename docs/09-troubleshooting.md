@@ -167,12 +167,12 @@ Check the binary in one line:
 ldd ~/ai/llama.cpp/build/bin/llama-server | grep -i ssl     # libssl.so* means HTTPS is compiled in
 ```
 
-The CLI is the dependable path for anything unusual — it resolves the same repo through
+The `hf` CLI is the dependable path for anything unusual — it resolves the same repo through
 `huggingface_hub` (own TLS, real HTTP errors) and drops the file into `~/ai/models`:
 
 ```bash
-./scripts/60-download-models.sh <user>/<repo> '<glob>'
-./scripts/95-models.sh reload
+hf download <user>/<repo> --include '<glob>' --local-dir ~/ai/models
+curl -s 'localhost:8080/models?reload=1' >/dev/null      # rescan the router's library
 ```
 
 Quote the glob tightly when a repo ships two files per quant. Re-uploaders often put an `MTP`
@@ -180,9 +180,9 @@ variant next to the plain one, and `:Q8_0` resolves to whichever of the two come
 
 ```bash
 # DavidAU/…-MAX-MTP-GGUF carries …-MAX-Q8_0.gguf (~30 GB) and …-MAX-MTP-Q8_0.gguf (~30 GB)
-./scripts/60-download-models.sh \
+hf download \
   DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF \
-  '*-MAX-Q8_0.gguf'
+  --include '*-MAX-Q8_0.gguf' --local-dir ~/ai/models
 ```
 
 And a 27B at Q8_0 is ~30 GB of the ~48 GiB GTT before any KV cache — it leaves nothing for a

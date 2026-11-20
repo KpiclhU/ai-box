@@ -229,8 +229,8 @@ What is different in router mode:
   inside any sane cap; a 20-step Flux.1-dev job may not — run those from
   `scripts/97-comfy-gen.sh` instead.
 - **Memory.** SDXL (~10 GB) fits alongside a 25 GB model in the 48 GiB pool. Flux.1-dev
-  (~34 GB) does not: `./scripts/95-models.sh unload <model>` first, or call the
-  `comfyui_free_memory` tool between jobs.
+  (~34 GB) does not: unload the model in the router UI (`POST /models/unload`) first, or call
+  the `comfyui_free_memory` tool between jobs.
 - **Keep `HOST=127.0.0.1`.** With tools enabled, llama.cpp refuses a non-loopback bind unless
   you pass `--allow-unauthenticated-tools`, which turns "use my model" into "run code and
   read files on this box" for anyone who reaches the port. If you set up Caddy through
@@ -266,17 +266,9 @@ LLAMA_EXTRA_ARGS="--ctx-size 32768 --n-gpu-layers 999 --flash-attn on --jinja --
 router's default of 4 would try. The two units `Conflicts=` each other, so enabling one stops
 the other; enable only one at a time.
 
-Then:
-
-```bash
-./scripts/95-models.sh list                      # what the router can see, plus load state
-./scripts/95-models.sh load Qwen3-Coder-30B-A3B-Instruct-Q6_K.gguf
-./scripts/95-models.sh unload Qwen3-Coder-30B-A3B-Instruct-Q6_K.gguf
-./scripts/95-models.sh download unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF:Q4_K_M
-./scripts/95-models.sh reload                    # rescan MODELS_DIR after copying a file in
-```
-
-The same thing over the API, if you prefer:
+Then open `http://127.0.0.1:8080` → **Models**. Every GGUF the router can see is listed with
+its load state, and that panel loads, unloads and downloads models — including from Hugging
+Face by `user/repo:QUANT`. The same, over the API:
 
 | Request | Effect |
 |---|---|
@@ -334,7 +326,7 @@ Now `LLM_MODEL=coder` survives a model swap, and `--models-preset` replaces `--m
 Two gotchas worth knowing:
 
 - **Memory.** A model stays loaded until something else needs the room. Before a ComfyUI
-  Flux job, unload it: `./scripts/95-models.sh unload <model>`, or run ComfyUI's
+  Flux job, unload it: `POST /models/unload`, or run ComfyUI's
   `POST /free {"unload_models": true}` only — that one frees ComfyUI's models, not the LLM's.
 - **First request is slow.** A 24 GB model has to come off NVMe; the UI shows `loading` and
   the chat request waits. That is not a dead connection. `--no-models-autoload` plus an

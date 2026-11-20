@@ -172,7 +172,7 @@ fi
 cat <<EOF
 
 Next:
-  1. get a model:   ./scripts/60-download-models.sh coder-q6
+  1. get a model:   hf download <repo> --include '<glob>' --local-dir ~/ai/models  (docs/07)
   2. install units: sudo ./scripts/50-install-services.sh
   3. check:         curl -s localhost:8080/health && ./scripts/90-bench.sh
 EOF

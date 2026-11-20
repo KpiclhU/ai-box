@@ -250,9 +250,9 @@ and an **API-format** workflow (ComfyUI: gear → *Enable Dev mode Options* → 
 with node ids mapped for prompt, steps and seed. The image lands inline in the conversation.
 `bot/workflows/sdxl.api.json` is already API format and can be imported as-is.
 
-Either way the generation competes with the LLM for GTT: unload the model first
-(`./scripts/95-models.sh unload <model>`) if a Flux job needs the room, and keep SDXL for
-when you want both.
+Either way the generation competes with the LLM for GTT: unload the model first (router UI →
+**Models** → unload, or `POST /models/unload`) if a Flux job needs the room, and keep SDXL
+for when you want both.
 
 ## Verify
 

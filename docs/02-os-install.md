@@ -94,7 +94,7 @@ sudo apt install -y build-essential git cmake ninja-build pkg-config \
     python3-venv python3-pip \
     libvulkan-dev vulkan-tools mesa-vulkan-drivers glslc libssl-dev
 pipx ensurepath                       # then log out and back in so `hf` is on PATH
-pipx install "huggingface_hub[cli]"   # used by 60-download-models.sh
+pipx install "huggingface_hub[cli]"   # the `hf` CLI, for pulling model files by hand
 sudo sensors-detect --auto
 ```
 

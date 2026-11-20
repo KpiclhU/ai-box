@@ -42,7 +42,7 @@ EOF
   else
     cat > "$LLAMA_ENV" <<EOF
 # No GGUF found under $AI_HOME/models at install time.
-# Download one (./scripts/60-download-models.sh coder-q6), set MODEL, then:
+# Download one (see docs/07-models.md), set MODEL, then:
 #   systemctl enable --now llama-server
 MODEL=
 HOST=127.0.0.1
@@ -60,7 +60,7 @@ ROUTER_ENV="$CONFIG_DIR/llama-router.env"
 if [ ! -f "$ROUTER_ENV" ]; then
   cat > "$ROUTER_ENV" <<EOF
 # Multi-model router configuration. Edit and: systemctl restart llama-router
-# Model names are the .gguf file names under MODELS_DIR; see ./scripts/95-models.sh list
+# Model names are the .gguf file names under MODELS_DIR; the UI lists what it can see
 MODELS_DIR=$AI_HOME/models
 # 1 is right for ~48 GiB of GTT: two 24 GB models do not fit in memory at once.
 MODELS_MAX=1
@@ -147,5 +147,5 @@ Endpoints:
 Multi-model (every GGUF in $AI_HOME/models, one port):
   sudo systemctl disable --now llama-server
   sudo systemctl enable --now llama-router
-  ./scripts/95-models.sh list
+  curl -s localhost:8080/models | jq
 EOF

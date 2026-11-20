@@ -68,17 +68,30 @@ Avoid fp8 weights on `gfx1151` (no FP8 matmul). Prefer fp16/bf16 or GGUF Q8_0.
 
 ## Download
 
+Router mode downloads GGUFs itself: open `http://127.0.0.1:8080` → **Models**, or
+
 ```bash
-./scripts/60-download-models.sh --list
-./scripts/60-download-models.sh coder-q6       # ~25 GB
-./scripts/60-download-models.sh chat-q4        # ~18 GB
-./scripts/60-download-models.sh sdxl           # ~7 GB
+curl -s -X POST localhost:8080/models -H 'Content-Type: application/json' \
+  -d '{"model":"unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q6_K"}'
 ```
 
-The presets use Hugging Face repo names and `--include` globs, because exact GGUF filenames
-change between quant uploads. **Check the file list on the model page before a 25 GB pull** —
-`hf download <repo> --include '*Q6_K*'` will fetch what exists and tell you if nothing
-matched.
+For anything else — a direct file when a `:QUANT` tag picks the wrong sibling, or an image
+model — use the `hf` CLI and drop it in the right directory:
+
+```bash
+hf download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF \
+  --include '*Q6_K*' --local-dir ~/ai/models        # ~25 GB
+hf download unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF \
+  --include '*Q4_K_M*' --local-dir ~/ai/models      # ~18 GB
+hf download ggml-org/gpt-oss-20b-GGUF \
+  --include '*MXFP4*' --local-dir ~/ai/models       # ~12 GB
+./scripts/96-comfy-models.sh download stabilityai/stable-diffusion-xl-base-1.0 \
+  'sd_xl_base_1.0.safetensors' checkpoints          # ~7 GB, into ComfyUI
+```
+
+Those globs matter because exact GGUF filenames change between quant uploads. **Check the
+file list on the model page before a 25 GB pull** — `--include` fetches what exists and tells
+you if nothing matched.
 
 Gated models (Flux.1-dev) need `hf auth login` with a token that has accepted the licence.
 
