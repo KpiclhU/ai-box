@@ -203,7 +203,7 @@ scripts/
   30-install-comfyui.sh       venv + ROCm torch + ComfyUI
   40-install-bot.sh           venv + bot deps
   50-install-services.sh      renders + installs systemd units
-  80-lan-access.sh            Caddy + basic auth in front of both UIs (optional)
+  80-lan-access.sh            basic auth in front of both UIs, reuses your Caddy
   60-download-models.sh       HF downloads, named presets
   90-bench.sh                 llama-bench, both backends if present
   95-models.sh                list/load/unload/download models via the router

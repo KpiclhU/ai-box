@@ -47,29 +47,47 @@ Two sane ways out.
 sudo ./scripts/80-lan-access.sh --password 'a long passphrase'
 ```
 
-It installs Caddy and configures it to listen on the LAN while llama-server and ComfyUI stay
-on loopback:
+llama-server and ComfyUI stay on loopback; Caddy listens on the LAN and asks for a password
+first:
 
 ```
 http://ai-box:8090      llama.cpp chat UI, /v1 API, /models
 http://ai-box:8190      ComfyUI
 ```
 
-Both prompt for basic auth; `--user`, `--ports`, `--dry-run` (print the Caddyfile) and
-`--remove` are supported. The original `/etc/caddy/Caddyfile` is backed up, Caddy validates
-the config before restarting, and the SSH tunnel keeps working unchanged.
+**An existing Caddy is reused, not replaced.** The site blocks go into
+`/etc/caddy/ai-box.caddy` and one `import` line is added to your `Caddyfile` — nothing else in
+it is rewritten, and Caddy is *reloaded* rather than restarted, so your other sites keep
+serving. Only if no Caddy is found at all does the script `apt install` one (and then it
+creates a minimal `Caddyfile` with global options; the snippet deliberately holds no global
+options, since they may appear only once per config).
+
+Flags: `--user`, `--password`, `--ports 8090 8190`, `--hostnames ai.lan comfy.lan` (for names
+your Caddy already holds certificates for — then no new ports are opened at all),
+`--dry-run` (print the snippet and the import line, change nothing), `--remove` (strip the
+import and delete the snippet).
+
+What the script does to stay out of your way:
+
+- **Validates before applying.** `caddy validate` must pass, and on failure the `import` line
+  is rolled back and the snippet deleted, leaving your `Caddyfile` byte-identical.
+- **Bare-port mode needs 8090/8190 free** (WebSocket included for ComfyUI). If something
+  already listens there it refuses to touch anything, so pass `--ports` or use `--hostnames`.
+- **Retries the directive spelling.** Caddy 2.8 renamed `basicauth` to `basic_auth`; the
+  script picks by version and re-renders if validation disagrees.
+- **`--remove` is surgical.** It deletes the two lines it added rather than restoring a stale
+  backup, so edits you made later survive.
 
 Caveats worth reading before you rely on it:
 
 - **Plain HTTP.** Basic auth sends the password base64-encoded, not encrypted. Fine on a home
-  LAN you control; not fine on a shared or café network. To get TLS with a local certificate,
-  use a hostname in each `site` block plus `tls internal` and install Caddy's root CA on your
-  devices.
+  LAN you control; not fine on a shared or café network. `--hostnames` with a name your Caddy
+  already serves over TLS fixes that, as does `tls internal` plus installing Caddy's root CA.
 - **Never port-forward these.** For access from outside, run WireGuard or Tailscale and reach
   `ai-box` over the tunnel/VPN; Caddy is for the LAN.
 - **The bot is unaffected.** It talks to `127.0.0.1:8080` directly and never goes through
   Caddy.
-- **Caddy costs ~40 MB of RAM** and one extra process; the model is untouched.
+- **Cost is one vhost**, a few MB of RAM in the Caddy process you already run.
 
 ### VPN instead of opening ports
 
