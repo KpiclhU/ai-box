@@ -26,18 +26,38 @@ case "$BACKEND" in
 esac
 
 if [ "$BACKEND" = "rocm" ] || [ "$BACKEND" = "both" ]; then
+  # ROCm installs hipcc under /opt/rocm/bin, which is not on PATH in every non-login
+  # shell (systemd units, `ssh box cmd`), so check the prefix before giving up.
+  for prefix in "${ROCM_PATH:-}" /opt/rocm; do
+    if [ -n "$prefix" ] && [ -x "$prefix/bin/hipcc" ]; then
+      PATH="$prefix/bin:$PATH"
+      export PATH
+      break
+    fi
+  done
+
   if ! command -v hipcc >/dev/null; then
-    cat >&2 <<'EOF'
+    codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}" || true)"
+    codename="${codename:-noble}"
+    cat >&2 <<EOF
 error: hipcc not found. The HIP build needs the ROCm user-space toolchain.
 
-  sudo apt install -y "linux-headers-$(uname -r)"
-  wget https://repo.radeon.com/amdgpu-install/latest/ubuntu/noble/amdgpu-install_*_all.deb
-  sudo apt install -y ./amdgpu-install_*_all.deb
+  sudo apt install -y "linux-headers-\$(uname -r)"
+  codename=\$(. /etc/os-release; echo "\$VERSION_CODENAME")     # ${codename} on this box
+  url=https://repo.radeon.com/amdgpu-install/latest/ubuntu/\$codename
+  file=\$(wget -qO- "\$url/" | grep -o 'amdgpu-install_[0-9.]*-1_all\.deb' | head -1)
+  wget "\$url/\$file"
+  sudo apt install -y "./\$file"
   sudo amdgpu-install -y --usecase=rocm --no-dkms
-  sudo usermod -aG render,video "$(id -un)"  # then log out and back in
+  sudo usermod -aG render,video "\$(id -un)"   # then log out and back in
 
-Check the current ROCm install page for your distro's repo path if the URL 404s.
-Then re-run this script, or use the Vulkan backend instead:
+Two reasons the obvious command 404s:
+  - the repo path is the distro codename (jammy 22.04, noble 24.04, resolute 26.04),
+    not "latest" nor another release's codename;
+  - wget does not expand URL wildcards, so amdgpu-install_*_all.deb requests a literal '*'.
+Directory listing: https://repo.radeon.com/amdgpu-install/latest/ubuntu/
+
+Then re-run this script, or use the Vulkan backend instead (no sudo, no ROCm):
   ./scripts/20-install-llama.sh vulkan
 EOF
     exit 1

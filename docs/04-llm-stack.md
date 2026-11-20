@@ -30,13 +30,16 @@ Two rules:
 Install the ROCm user-space toolchain (needed for `hipcc`, rocBLAS, hipBLASLt):
 
 ```bash
-# AMD's repo method; the exact package set changes between releases, check the current
-# ROCm install page for your distro if a step 404s.
+# AMD's repo method. The path segment is your distro codename, not "latest":
+#   jammy = 22.04, noble = 24.04, resolute = 26.04
 sudo apt install -y "linux-headers-$(uname -r)"
-wget https://repo.radeon.com/amdgpu-install/latest/ubuntu/noble/amdgpu-install_*_all.deb
-sudo apt install -y ./amdgpu-install_*_all.deb
+codename=$(. /etc/os-release; echo "$VERSION_CODENAME")
+url=https://repo.radeon.com/amdgpu-install/latest/ubuntu/$codename
+file=$(wget -qO- "$url/" | grep -o 'amdgpu-install_[0-9.]*-1_all\.deb' | head -1)
+wget "$url/$file"
+sudo apt install -y "./$file"
 sudo amdgpu-install -y --usecase=rocm --no-dkms
-sudo usermod -aG render,video "$USER"     # log out and back in
+sudo usermod -aG render,video "$(id -un)"     # log out and back in
 ```
 
 Then verify:
@@ -47,10 +50,21 @@ rocm-smi                            # should list the iGPU
 hipcc --version
 ```
 
-Ubuntu 26.04 may need the corresponding `ubuntu` repo path instead of `noble`; the ROCm
-compatibility matrix lists 26.04.1 explicitly, so the matching path exists. If a path 404s,
-browse <https://repo.radeon.com/amdgpu-install/latest/ubuntu/> and use the codename that is
-actually published.
+Two things produce a `404` here, and most guides get both wrong:
+
+- **The codename.** Ubuntu 26.04 is `resolute`. Copy-pasted instructions say `noble`
+  (24.04) — that path exists, but it is the wrong release's packages.
+- **`wget` does not expand wildcards.** `wget .../amdgpu-install_*_all.deb` fetches a literal
+  `*` and 404s even on a correct path. Read the actual filename out of the listing, as above.
+
+Check what is published at any time:
+
+```bash
+wget -qO- https://repo.radeon.com/amdgpu-install/latest/ubuntu/   # jammy/ noble/ resolute/
+```
+
+The compatibility matrix lists Ubuntu 26.04.1 with kernel 7.0 for `gfx1151` explicitly, under
+current ROCm (10.x) as well as under the 7.x releases the PyTorch wheels use.
 
 This ROCm install is only needed for the **HIP `llama.cpp` build** (and for `rocminfo` /
 `rocm-smi`). ComfyUI does not need it: the PyTorch `rocm7.2` wheels carry their own ROCm
