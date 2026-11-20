@@ -2,11 +2,12 @@
 
 ## Services
 
-Three units, all installed by `scripts/50-install-services.sh`:
+Four units, all installed by `scripts/50-install-services.sh`:
 
 | Unit | Port | Depends on |
 |---|---|---|
-| `llama-server.service` | 127.0.0.1:8080 | models in `~/ai/models` |
+| `llama-server.service` | 127.0.0.1:8080 | `MODEL=` in the env file |
+| `llama-router.service` | 127.0.0.1:8080 | every GGUF in `MODELS_DIR`; `Conflicts=` llama-server |
 | `comfyui.service` | 127.0.0.1:8188 | `~/ai/comfyui/.venv` |
 | `ai-discord-bot.service` | — | both of the above, `./.env` |
 
@@ -25,6 +26,7 @@ Configuration lives in environment files, not in the units:
 
 ```
 ~/.config/ai-box/llama-server.env     MODEL=..., HOST, PORT, LLAMA_EXTRA_ARGS=...
+~/.config/ai-box/llama-router.env     MODELS_DIR, MODELS_MAX, HOST, PORT, LLAMA_EXTRA_ARGS=...
 ~/.config/ai-box/comfyui.env          HOST, PORT, COMFY_EXTRA_ARGS=...
 ./.env                                DISCORD_TOKEN, LLM_*, COMFY_*
 ```

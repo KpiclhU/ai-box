@@ -55,6 +55,24 @@ else
   echo "$LLAMA_ENV exists, left untouched"
 fi
 
+# ---- llama-router env -------------------------------------------------------
+ROUTER_ENV="$CONFIG_DIR/llama-router.env"
+if [ ! -f "$ROUTER_ENV" ]; then
+  cat > "$ROUTER_ENV" <<EOF
+# Multi-model router configuration. Edit and: systemctl restart llama-router
+# Model names are the .gguf file names under MODELS_DIR; see ./scripts/95-models.sh list
+MODELS_DIR=$AI_HOME/models
+# 1 is right for ~48 GiB of GTT: two 24 GB models do not fit in memory at once.
+MODELS_MAX=1
+HOST=127.0.0.1
+PORT=8080
+LLAMA_EXTRA_ARGS="--ctx-size 32768 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2"
+EOF
+  echo "wrote $ROUTER_ENV"
+else
+  echo "$ROUTER_ENV exists, left untouched"
+fi
+
 # ---- comfyui env ------------------------------------------------------------
 COMFY_ENV="$CONFIG_DIR/comfyui.env"
 if [ ! -f "$COMFY_ENV" ]; then
@@ -79,7 +97,7 @@ chmod 600 "$CONFIG_DIR"/*.env
 
 # ---- render units -----------------------------------------------------------
 say "Installing units into $UNIT_DIR"
-for unit in llama-server comfyui ai-discord-bot; do
+for unit in llama-server llama-router comfyui ai-discord-bot; do
   src="$REPO/systemd/${unit}.service"
   [ -f "$src" ] || die "missing $src"
   sed -e "s|__USER__|$TARGET_USER|g" \
@@ -123,5 +141,11 @@ Status:
 
 Endpoints:
   http://127.0.0.1:8080/health        llama.cpp
+  http://127.0.0.1:8080               llama.cpp chat UI (MCP tools), over the SSH tunnel
   http://127.0.0.1:8188               ComfyUI
+
+Multi-model (every GGUF in $AI_HOME/models, one port):
+  sudo systemctl disable --now llama-server
+  sudo systemctl enable --now llama-router
+  ./scripts/95-models.sh list
 EOF

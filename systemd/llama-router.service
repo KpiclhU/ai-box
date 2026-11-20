@@ -1,0 +1,28 @@
+[Unit]
+Description=llama.cpp router (every GGUF, on-demand loading)
+Documentation=https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#using-multiple-models
+After=network-online.target
+Wants=network-online.target
+# Only one process can own the port, so this unit and llama-server are exclusive.
+Conflicts=llama-server.service
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__AI_HOME__/llama.cpp
+Environment=HOME=__HOME__
+EnvironmentFile=-__CONFIG_DIR__/llama-router.env
+# Router mode: no --model. systemd expands ${MODELS_DIR}/${MODELS_MAX} here;
+# $LLAMA_EXTRA_ARGS is split on whitespace, so extra flags live in the env file.
+# Every model instance inherits these arguments.
+ExecStart=__AI_HOME__/llama.cpp/build/bin/llama-server --models-dir ${MODELS_DIR} --models-max ${MODELS_MAX} --host ${HOST} --port ${PORT} $LLAMA_EXTRA_ARGS
+Restart=on-failure
+RestartSec=5
+# The first request for a 24 GB model has to read it off NVMe.
+TimeoutStartSec=1800
+LimitNOFILE=65536
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=multi-user.target

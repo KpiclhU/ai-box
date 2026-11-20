@@ -195,6 +195,7 @@ docs/                         the deep-dive pages, in reading order
   07-models.md                what fits in 64 GB, with sizes
   08-operations.md            services, updates, backups, coexistence
   09-troubleshooting.md       symptom → cause → fix
+  10-webui-and-models.md      built-in chat UI, MCP connectors, router mode
 scripts/
   00-preflight.sh             read-only health/report
   10-gpu-memory.sh            sets ttm.pages_limit via GRUB
@@ -204,8 +205,10 @@ scripts/
   50-install-services.sh      renders + installs systemd units
   60-download-models.sh       HF downloads, named presets
   90-bench.sh                 llama-bench, both backends if present
+  95-models.sh                list/load/unload/download models via the router
 systemd/
-  llama-server.service        :8080
+  llama-server.service        :8080, one model
+  llama-router.service        :8080, every GGUF in ~/ai/models (alternatives to each other)
   comfyui.service             :8188
   ai-discord-bot.service      the bot
 bot/                          discord.py bot (bot.py, llm.py, comfy.py, store.py)
@@ -216,7 +219,8 @@ bot/                          discord.py bot (bot.py, llm.py, comfy.py, store.py
 
 | Thing | Value |
 |---|---|
-| llama-server | `http://127.0.0.1:8080` — `/v1/chat/completions`, `/health`, `/props` |
+| llama-server | `http://127.0.0.1:8080` — also the built-in chat UI, with MCP tools |
+| llama-server API | `/v1/chat/completions`, `/health`, `/props`, `/tools` |
 | ComfyUI | `http://127.0.0.1:8188` — `/prompt`, `/history/<id>`, `/view` |
 | SSH tunnel (headless box) | `ssh -N -L 8080:127.0.0.1:8080 -L 8188:127.0.0.1:8188 ai@ai-box` |
 | State directory | `~/.config/ai-box/` (env files), `~/ai/` (binaries, models, venvs) |
@@ -240,6 +244,7 @@ bot/                          discord.py bot (bot.py, llm.py, comfy.py, store.py
 
 ## Next steps if you want to go further
 
-- `llama-swap` in front of several `llama-server` instances for hot model switching.
+- A preset file plus router mode (see [docs/10](docs/10-webui-and-models.md)) if you want
+  several models behind one port without a third-party switcher.
 - A second 2 TB drive in the rear socket for a model library (both slots are Gen4 x4).
 - Whisper or a TTS model on the NPU/GPU for voice in Discord — not wired up here.
