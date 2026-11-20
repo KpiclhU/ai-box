@@ -203,6 +203,7 @@ scripts/
   30-install-comfyui.sh       venv + ROCm torch + ComfyUI
   40-install-bot.sh           venv + bot deps
   50-install-services.sh      renders + installs systemd units
+  80-lan-access.sh            Caddy + basic auth in front of both UIs (optional)
   60-download-models.sh       HF downloads, named presets
   90-bench.sh                 llama-bench, both backends if present
   95-models.sh                list/load/unload/download models via the router
@@ -223,6 +224,7 @@ bot/                          discord.py bot (bot.py, llm.py, comfy.py, store.py
 | llama-server API | `/v1/chat/completions`, `/health`, `/props`, `/tools` |
 | ComfyUI | `http://127.0.0.1:8188` — `/prompt`, `/history/<id>`, `/view` |
 | SSH tunnel (headless box) | `ssh -N -L 8080:127.0.0.1:8080 -L 8188:127.0.0.1:8188 ai@ai-box` |
+| LAN access (optional) | `sudo ./scripts/80-lan-access.sh --password '...'` → `http://ai-box:8090`, `:8190`, basic auth |
 | State directory | `~/.config/ai-box/` (env files), `~/ai/` (binaries, models, venvs) |
 | Bot data | `~/ai/data/bot.sqlite3` |
 | RAM budget | ~12–14 GB OS + ~48 GiB GPU-addressable |

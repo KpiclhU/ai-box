@@ -31,7 +31,53 @@ Useful server-side UI flags:
 |---|---|
 | `--ui-config '{"theme":"dark"}'` | default preferences for everyone |
 | `--no-ui` | disable the UI, API only |
-| `--host 0.0.0.0` | expose it to the LAN — **don't**; there is no auth |
+| `--host 0.0.0.0` | expose it to the LAN — **don't**; there is no auth (see *Access from the LAN*) |
+
+## Access from the LAN
+
+Nothing binds `0.0.0.0` on purpose: there is no auth in llama-server, ComfyUI or the bot, so
+exposing them raw means anyone on the network can drive your box — and if MCP tools or
+`--agent` are on, "use the model" becomes "run code on the machine".
+
+Two sane ways out.
+
+### Reverse proxy with a password (LAN only)
+
+```bash
+sudo ./scripts/80-lan-access.sh --password 'a long passphrase'
+```
+
+It installs Caddy and configures it to listen on the LAN while llama-server and ComfyUI stay
+on loopback:
+
+```
+http://ai-box:8090      llama.cpp chat UI, /v1 API, /models
+http://ai-box:8190      ComfyUI
+```
+
+Both prompt for basic auth; `--user`, `--ports`, `--dry-run` (print the Caddyfile) and
+`--remove` are supported. The original `/etc/caddy/Caddyfile` is backed up, Caddy validates
+the config before restarting, and the SSH tunnel keeps working unchanged.
+
+Caveats worth reading before you rely on it:
+
+- **Plain HTTP.** Basic auth sends the password base64-encoded, not encrypted. Fine on a home
+  LAN you control; not fine on a shared or café network. To get TLS with a local certificate,
+  use a hostname in each `site` block plus `tls internal` and install Caddy's root CA on your
+  devices.
+- **Never port-forward these.** For access from outside, run WireGuard or Tailscale and reach
+  `ai-box` over the tunnel/VPN; Caddy is for the LAN.
+- **The bot is unaffected.** It talks to `127.0.0.1:8080` directly and never goes through
+  Caddy.
+- **Caddy costs ~40 MB of RAM** and one extra process; the model is untouched.
+
+### VPN instead of opening ports
+
+Tailscale (or plain WireGuard) gives you `http://ai-box:8080` from your laptop anywhere with
+no proxy and no exposed port. The trade-off is a third-party account and a client on each
+device. If you go that way, bind the services to the VPN interface only — with Tailscale that
+means `--host 0.0.0.0` plus `ufw allow in on tailscale0 to any port 8080,8188` — rather than
+relying on the router's firewall alone.
 
 ## Connectors (MCP tools)
 
