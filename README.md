@@ -176,7 +176,8 @@ documented ones, so treat 64 GB results as "same or slightly lower".
 | Flux.1-schnell, 4 steps | ~15–30 s | GGUF Q8 recommended |
 | Flux.1-dev fp16, 20 steps | ~70–120 s | ~34 GB peak with the fp16 T5 encoder |
 
-Measure your own box rather than trusting a table: `./scripts/90-bench.sh`.
+Measure your own box rather than trusting a table: `./scripts/90-bench.sh` — stop
+`llama-server` first, it already holds the model in GPU memory.
 
 ---
 

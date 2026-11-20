@@ -79,6 +79,28 @@ that will be fixed.
 `-c 32768` is a deliberate default; `-c 131072` on a 30B model costs many GB of KV cache and
 competes with the image stack. Raise it only when you have measured free GTT.
 
+## `llama-bench` / `llama-server`: `cudaMalloc failed: out of memory` at 48 GiB
+
+ROCm printing `Total VRAM: 49152 MiB` and then failing to allocate a 23 GB model means GTT is
+already mapped, not that the limit is wrong. The usual cause is a second copy of the same
+model: `llama-server.service` is running and holding ~24 GB of GTT plus its KV cache, so the
+bench's allocation is exactly what does not fit.
+
+```bash
+sudo systemctl stop llama-server
+./scripts/90-bench.sh
+sudo systemctl start llama-server
+```
+
+`./scripts/90-bench.sh` now refuses to start while the unit is active (override with
+`BENCH_ALLOW_BUSY=1`). To see who is using the memory: `amdgpu_top`, or as root
+`grep mem_info_gtt /sys/kernel/debug/dri/0/amd_mem_info`. A live ComfyUI Flux job (30–34 GB)
+is the other big consumer; page cache does not matter, it is reclaimable.
+
+If GTT is genuinely idle and the allocation still fails, check that `pages_limit` survived
+the reboot (`cat /sys/module/ttm/parameters/pages_limit`), then try a smaller quant
+(Q4_K_M ≈ 17 GB) to separate "limit not applied" from "model too big".
+
 ## Decode is much slower than the numbers in the README
 
 In order:

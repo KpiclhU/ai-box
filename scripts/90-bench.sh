@@ -5,7 +5,8 @@
 #   ./scripts/90-bench.sh ~/ai/models/x.gguf
 #
 # Runs llama-bench for every build present (rocm, vulkan) and appends results to
-# bench/YYYY-MM-DD.md.
+# bench/YYYY-MM-DD.md. Stop llama-server first: it already holds the model in GTT.
+# Override the check with BENCH_ALLOW_BUSY=1.
 set -euo pipefail
 
 AI_HOME="${AI_HOME:-$HOME/ai}"
@@ -30,6 +31,17 @@ fi
   exit 1
 }
 
+# A running llama-server already holds the model in GTT, so a second copy will fail to
+# allocate even though "Total VRAM" is reported as the full GTT limit.
+if [ "${BENCH_ALLOW_BUSY:-0}" != "1" ] && command -v systemctl >/dev/null 2>&1 \
+   && systemctl is-active --quiet llama-server 2>/dev/null; then
+  echo "llama-server is running and holds the model in GPU memory." >&2
+  echo "  stop it first:  sudo systemctl stop llama-server" >&2
+  echo "  start it again: sudo systemctl start llama-server" >&2
+  echo "  measure anyway: BENCH_ALLOW_BUSY=1 $0" >&2
+  exit 1
+fi
+
 PP="${PP:-512}"
 TG="${TG:-128}"
 mkdir -p "$(dirname "$OUT")"
@@ -40,6 +52,7 @@ mkdir -p "$(dirname "$OUT")"
   echo "- model: \`$(basename "$MODEL")\`"
   echo "- kernel: \`$(uname -r)\`"
   echo "- gtt pages: \`$(cat /sys/module/ttm/parameters/pages_limit 2>/dev/null || echo unknown)\`"
+  echo "- gtt used: \`$(awk '/mem_info_gtt_used/{print $2; exit}' /sys/kernel/debug/dri/0/amd_mem_info 2>/dev/null || true)\` bytes"
   echo "- gov: \`$(command -v powerprofilesctl >/dev/null && powerprofilesctl get 2>/dev/null || echo unknown)\`"
   echo
 } >> "$OUT"
