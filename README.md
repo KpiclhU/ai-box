@@ -130,7 +130,8 @@ ssh -N -L 8080:127.0.0.1:8080 -L 8188:127.0.0.1:8188 ai@ai-box
 
 ```bash
 ./scripts/30-install-comfyui.sh                       # again, no sudo — the venv lives in your home
-# put an SDXL checkpoint in ~/ai/comfyui/models/checkpoints/
+./scripts/60-download-models.sh sdxl                  # 7 GB checkpoint, straight into models/checkpoints
+./scripts/96-comfy-models.sh                          # what is on disk, by folder, with sizes
 sudo ./scripts/50-install-services.sh                 # ComfyUI on 127.0.0.1:8188
 ```
 
@@ -207,6 +208,8 @@ scripts/
   60-download-models.sh       HF downloads, named presets
   90-bench.sh                 llama-bench, both backends if present
   95-models.sh                list/load/unload/download models via the router
+  96-comfy-models.sh          list/download/delete ComfyUI models, free its GTT
+  97-comfy-gen.sh             one image through ComfyUI — also Llama Chat's "draw" tool
 systemd/
   llama-server.service        :8080, one model
   llama-router.service        :8080, every GGUF in ~/ai/models (alternatives to each other)

@@ -139,6 +139,40 @@ cd ~/ai/comfyui/custom_nodes
 git clone https://github.com/city96/ComfyUI-GGUF     # only if using Flux GGUF
 ```
 
+## Managing models from the command line
+
+ComfyUI's Model Library (the **Models** entry in the left sidebar) only *browses* what is
+already under `models/`: a self-hosted server has no download endpoint at all. `96-comfy-models.sh`
+is the other half, and it works whether or not ComfyUI is running:
+
+```bash
+./scripts/96-comfy-models.sh                 # every model file, by folder, with sizes
+./scripts/96-comfy-models.sh dirs            # the paths ComfyUI actually uses + free space
+./scripts/96-comfy-models.sh download city96/FLUX.1-schnell-gguf '*Q8*' diffusion_models
+./scripts/96-comfy-models.sh url https://civitai.com/api/download/models/12345 loras
+./scripts/96-comfy-models.sh rm loras my_lora.safetensors     # -y to skip the prompt
+./scripts/96-comfy-models.sh free            # POST /free: drop cached weights, keep the queue
+```
+
+Folder names are ComfyUI's own vocabulary, and picking the wrong one is the usual mistake:
+
+| Folder | Holds |
+|---|---|
+| `checkpoints` | SDXL / SD1.5 all-in-one files — what `CheckpointLoaderSimple` lists |
+| `diffusion_models` | Flux / SD3 / UNet-only weights (the new layout), with the encoders from `text_encoders/` |
+| `text_encoders` | `clip_l.safetensors`, `t5xxl_fp16.safetensors` |
+| `vae` | `ae.safetensors` for Flux, SDXL VAEs |
+| `loras`, `controlnet`, `upscale_models`, `clip_vision`, `unet` | as named |
+
+Gated Civitai files need a token: append `?token=<key>` to the download URL (the script reminds
+you). Hugging Face gated repos need `hf auth login` first. `dirs` reads `extra_model_paths.yaml`
+through ComfyUI, so models on the second NVMe are listed too; with ComfyUI stopped it falls back
+to the checkout's `models/` tree.
+
+If you would rather click: ComfyUI-Manager adds a model catalog and download dialog inside the
+UI, and `comfy model download --url <url> --relative-path models/loras` is the official CLI for
+the same job. Neither knows about this repo's presets; that is what the script is for.
+
 ## The API contract the bot uses
 
 POST the workflow in **API format** (not the UI `nodes`/`links` file), then fetch results:
@@ -163,6 +197,43 @@ Two API gotchas worth knowing:
   firehose shared with the ComfyUI browser tab.
 - If you queue many prompts, call `/free` between them. The caching allocator not being
   flushed between runs has been measured at ~2.4× slowdown on the second run.
+
+## Getting an image out of the chat window
+
+llama.cpp's Llama Chat **cannot generate images by itself**. The server has no image-generation
+tool and no image-backend flag; its built-in tools are only `read_file`, `file_glob_search`,
+`grep_search`, `exec_shell_command`, `write_file`, `edit_file` and `get_info`. Two ways to
+close the loop, and they are not exclusive:
+
+**1. Let the model run the CLI.** Give the server the shell tool, and `97-comfy-gen.sh` becomes
+the model's "draw" action:
+
+```
+# ~/.config/ai-box/llama-server.env  (or llama-router.env)
+LLAMA_EXTRA_ARGS="--ctx-size 32768 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2 --tools exec_shell_command"
+```
+
+```bash
+./scripts/97-comfy-gen.sh "a corgi astronaut, cinematic lighting" --steps 28 -W 1024 -H 1024
+# -> /home/ai-user/ai/images/comfy-20261120-143012-123456789.png
+```
+
+Then in the chat: *“generate an image of a corgi astronaut by running
+/home/ai-user/ai-box/scripts/97-comfy-gen.sh with your prompt”*. The model calls the tool, the
+script queues the graph on ComfyUI, and the reply carries the PNG path. Options: `-n` negative
+prompt, `-W`/`-H` (rounded to multiples of 8), `--steps`, `-c` cfg, `--seed`, `-m` checkpoint,
+`-o` output dir. It uses `COMFY_WORKFLOW` (default `bot/workflows/sdxl.api.json`) and resolves
+nodes by class type, so a re-exported graph still works.
+
+**2. Use a front end that has an image tool.** Open WebUI's built-in *Image Generation* supports
+ComfyUI directly: admin → Settings → Images → engine `ComfyUI`, base URL `http://127.0.0.1:8188`,
+and an **API-format** workflow (ComfyUI: gear → *Enable Dev mode Options* → *Save (API Format)*),
+with node ids mapped for prompt, steps and seed. The image lands inline in the conversation.
+`bot/workflows/sdxl.api.json` is already API format and can be imported as-is.
+
+Either way the generation competes with the LLM for GTT: unload the model first
+(`./scripts/95-models.sh unload <model>`) if a Flux job needs the room, and keep SDXL for
+when you want both.
 
 ## Verify
 

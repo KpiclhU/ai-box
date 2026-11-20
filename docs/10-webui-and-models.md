@@ -33,6 +33,20 @@ Useful server-side UI flags:
 | `--no-ui` | disable the UI, API only |
 | `--host 0.0.0.0` | expose it to the LAN — **don't**; there is no auth (see *Access from the LAN*) |
 
+### Images
+
+Llama Chat has **no image generation of its own** — the built-in tools are the file/shell set
+(`read_file`, `exec_shell_command`, …) and there is no image-backend flag. To draw from the
+chat, either give the server the shell tool and let the model run
+`scripts/97-comfy-gen.sh` (writes a PNG, replies with the path), or put Open WebUI in front
+and use its Image Generation tool, which speaks ComfyUI natively. Both, plus model management
+for the ComfyUI side (`scripts/96-comfy-models.sh`), are in
+[05-image-generation.md](05-image-generation.md#getting-an-image-out-of-the-chat-window).
+
+The shell tool is a real hazard: `--tools`/`--agent` expose command execution over the API.
+llama-server pins `--cors-origins` to localhost when they are on, and refuses non-loopback
+binds without `--allow-unauthenticated-tools` — leave that alone unless the box is isolated.
+
 ## Access from the LAN
 
 Nothing binds `0.0.0.0` on purpose: there is no auth in llama-server, ComfyUI or the bot, so
