@@ -60,7 +60,9 @@ see `/dev/kfd`), and large BIOS VRAM carve-outs.
 
 ## 3. The plan
 
-Time estimates assume you have the parts in hand and a monitor + keyboard.
+Time estimates assume you have the parts in hand and a monitor + keyboard. If you only want the
+commands in order — including the MCP setup — that is
+[docs/00-workflow.md](docs/00-workflow.md).
 
 ### Phase 0 — Hardware and BIOS (30 min)
 
@@ -196,6 +198,7 @@ Measure your own box rather than trusting a table: `./scripts/90-bench.sh` — s
 ```
 README.md                     this plan
 docs/                         the deep-dive pages, in reading order
+  00-workflow.md              the whole build on one page: every script, in order
   01-hardware-and-bios.md     sockets, BIOS, firmware, fans
   02-os-install.md            Ubuntu install, partitioning, first boot
   03-gpu-memory.md            carve-out vs GTT/TTM, the 64 GB budget
