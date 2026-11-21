@@ -142,8 +142,9 @@ Yes. Ubuntu Server's installer (subiquity) reads a YAML answer file and can inst
 at the keyboard. It is the `autoinstall` format Canonical documents as "unattended",
 "hands-off" or "preseeded", supported since 20.04 and current on 26.04. `autoinstall/user-data`
 in this repo is a ready answer file for this machine: hostname `ai-box`, user `ai-user`, OpenSSH
-with keys only, whole-disk ext4, DHCP on Ethernet, the toolchain from the next section
-pre-installed, and the Phase 2 GRUB arguments already applied.
+with keys only, whole-disk ext4, DHCP on Ethernet (a fixed address is three lines away, see
+"Static address instead of DHCP" below), the toolchain from the next section pre-installed, and
+the Phase 2 GRUB arguments already applied.
 
 ### What still needs a human
 
@@ -291,6 +292,8 @@ For one machine this is more work than the `e` keypress, which is why it is not 
 
 ### What the answer file does that the manual steps below would otherwise do
 
+- `network` — one Ethernet interface matched by name (`en*`), DHCP by default. A fixed
+  address goes in this same stanza, see "Static address instead of DHCP".
 - `storage.layout: direct` with `match: {size: largest}` — plain ext4 on the whole 2 TB, and
   `largest` so the seed stick is never a candidate. Change `direct` to `lvm` to keep the
   interactive installer's default layout.
@@ -303,6 +306,55 @@ For one machine this is more work than the `e` keypress, which is why it is not 
 Deliberately **not** automated, because each needs a decision or a network fetch:
 `fwupdmgr update`, `sensors-detect`, `pipx install huggingface_hub`, and the zram stanza.
 Those stay manual, in the sections that follow.
+
+### Static address instead of DHCP
+
+`dhcp4: true` is the default and the right choice for most boxes — a DHCP reservation in the
+router pins the address without putting it in two places. If the box must own a fixed address
+anyway, put it in the answer file: subiquity applies it to the running installer and writes the
+same stanza into the target system, so the first boot already answers on that address.
+
+Replace `dhcp4: true` with this (the commented block in `autoinstall/user-data` is the same
+thing):
+
+```yaml
+  network:
+    version: 2
+    ethernets:
+      lan:
+        match:
+          name: "en*"
+        addresses: # plural: `address:` is an unknown key and aborts the install
+          - 192.168.150.40/24
+        routes: # the supported form of the deprecated `gateway4:`
+          - to: default
+            via: 192.168.150.1
+        nameservers:
+          addresses:
+            - 192.168.150.5
+```
+
+**One wrong key ends the install.** The answer file is not what netplan reads; subiquity renders
+it into `/etc/netplan/00-installer-config.yaml` and runs `netplan apply`, and a schema error
+there fails `Network/apply_autoinstall_config`, drops you at `An error occurred. Press enter to
+start a shell`, and stops. `address:` for `addresses:` is the trap — the error reads
+`Error in network definition: unknown key 'address'`, and it is easy to miss because the rest of
+netplan takes singular keys. Also write the gateway as a route: `gateway4:` is deprecated in
+netplan 1.x.
+
+You do not have to re-run a 20-minute install to test a stanza. In the crash shell, subiquity's
+rendered copy is already there — fix it, apply it, and silence means the stanza is valid:
+
+```bash
+sed -i 's/address:$/addresses:/' /etc/netplan/00-installer-config.yaml   # live copy
+netplan apply && echo "stanza is valid"
+sed -i 's/address:$/addresses:/' /cdrom/autoinstall.yaml                 # the stick
+```
+
+If the stick is mounted read-only, `mount -o remount,rw /cdrom` first. Then `reboot` to re-run
+the install against the corrected file. On a system that is already installed, the same file is
+`/etc/netplan/00-installer-config.yaml`: edit, `sudo netplan apply`, then `ip -br a` to confirm
+— a mistake there is one error message instead of a dead installer.
 
 ## Swap: zram, not a swap partition
 

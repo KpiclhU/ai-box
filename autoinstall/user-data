@@ -28,6 +28,11 @@ autoinstall:
       - ssh-ed25519 AAAAAREPLACEMEWITHYOURPUBLICKEY user@laptop
 
   # Ethernet only, DHCP. Server does not configure Wi-Fi; use a cable for this build.
+  #
+  # For a fixed address, swap `dhcp4: true` for the commented block below. Spelling matters:
+  # netplan 1.x takes `addresses:` (plural) and a default route, and rejects `address:` with
+  # `unknown key 'address'`, which aborts the whole install. See docs/02-os-install.md ->
+  # "Static address instead of DHCP".
   network:
     version: 2
     ethernets:
@@ -35,6 +40,14 @@ autoinstall:
         match:
           name: "en*"
         dhcp4: true
+        # addresses:
+        #   - 192.168.150.40/24
+        # routes:
+        #   - to: default
+        #     via: 192.168.150.1
+        # nameservers:
+        #   addresses:
+        #     - 192.168.150.5
 
   # Whole-disk ext4, no swap partition. `largest` keeps the CIDATA stick out of the running.
   # Use `lvm` instead of `direct` if you want the interactive installer's default layout.
