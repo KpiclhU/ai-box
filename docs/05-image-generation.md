@@ -229,7 +229,7 @@ the model's "draw" action:
 
 ```
 # ~/.config/ai-box/llama-server.env  (or llama-router.env)
-LLAMA_EXTRA_ARGS="--ctx-size 32768 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2 --tools exec_shell_command"
+LLAMA_EXTRA_ARGS="--ctx-size 131072 --cache-type-k q8_0 --cache-type-v q8_0 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2 --tools exec_shell_command"
 ```
 
 ```bash

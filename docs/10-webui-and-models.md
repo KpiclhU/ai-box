@@ -128,7 +128,7 @@ cp mcp.example.json ~/.config/ai-box/mcp.json
 With the systemd service, add the flag to the extra-args line instead of the unit:
 
 ```
-LLAMA_EXTRA_ARGS="--ctx-size 32768 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2 --mcp-servers-config /home/ai-user/.config/ai-box/mcp.json"
+LLAMA_EXTRA_ARGS="--ctx-size 131072 --cache-type-k q8_0 --cache-type-v q8_0 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2 --mcp-servers-config /home/ai-user/.config/ai-box/mcp.json"
 ```
 
 ```bash
@@ -259,10 +259,12 @@ MODELS_DIR=/home/ai-user/ai/models
 MODELS_MAX=1
 HOST=127.0.0.1
 PORT=8080
-LLAMA_EXTRA_ARGS="--ctx-size 32768 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2"
+LLAMA_EXTRA_ARGS="--ctx-size 131072 --cache-type-k q8_0 --cache-type-v q8_0 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2"
 ```
 
-`MODELS_MAX=1` is deliberate. On ~48 GiB of shared GTT two 24 GB models do not fit, and the
+`--ctx-size` here is the **total** the router passes to each model it loads, so `--parallel 2`
+gives each request 64k. Every loaded model reserves its own KV cache for it; that is why the
+value is one number here and per-model in `models.ini` below. `MODELS_MAX=1` is deliberate. On ~48 GiB of shared GTT two 24 GB models do not fit, and the
 router's default of 4 would try. The two units `Conflicts=` each other, so enabling one stops
 the other; enable only one at a time.
 
@@ -306,7 +308,7 @@ llama-server --models-preset ~/.config/ai-box/models.ini
 version = 1
 
 [*]
-ctx-size = 32768
+ctx-size = 131072
 n-gpu-layers = 999
 flash-attn = on
 jinja = true

@@ -36,7 +36,10 @@ if [ ! -f "$LLAMA_ENV" ]; then
 MODEL=$MODEL
 HOST=127.0.0.1
 PORT=8080
-LLAMA_EXTRA_ARGS="--ctx-size 32768 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2 --alias local"
+# --ctx-size is the TOTAL across --parallel slots: 131072 / 2 = a 64k window per request.
+# q8_0 KV halves what it costs in memory and needs --flash-attn on. Lower --ctx-size if a
+# load starts failing; raise --parallel only together with the total.
+LLAMA_EXTRA_ARGS="--ctx-size 131072 --cache-type-k q8_0 --cache-type-v q8_0 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2 --alias local"
 EOF
     echo "wrote $LLAMA_ENV (model: $(basename "$MODEL"))"
   else
@@ -47,7 +50,10 @@ EOF
 MODEL=
 HOST=127.0.0.1
 PORT=8080
-LLAMA_EXTRA_ARGS="--ctx-size 32768 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2 --alias local"
+# --ctx-size is the TOTAL across --parallel slots: 131072 / 2 = a 64k window per request.
+# q8_0 KV halves what it costs in memory and needs --flash-attn on. Lower --ctx-size if a
+# load starts failing; raise --parallel only together with the total.
+LLAMA_EXTRA_ARGS="--ctx-size 131072 --cache-type-k q8_0 --cache-type-v q8_0 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2 --alias local"
 EOF
     echo "wrote $LLAMA_ENV (no model yet — service will not be started)"
   fi
@@ -66,7 +72,10 @@ MODELS_DIR=$AI_HOME/models
 MODELS_MAX=1
 HOST=127.0.0.1
 PORT=8080
-LLAMA_EXTRA_ARGS="--ctx-size 32768 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2"
+# --ctx-size is the TOTAL across --parallel slots: 131072 / 2 = a 64k window per request.
+# q8_0 KV halves what it costs in memory and needs --flash-attn on. Lower --ctx-size if a
+# load starts failing; raise --parallel only together with the total.
+LLAMA_EXTRA_ARGS="--ctx-size 131072 --cache-type-k q8_0 --cache-type-v q8_0 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2"
 EOF
   echo "wrote $ROUTER_ENV"
 else

@@ -3,7 +3,9 @@
 Budget: **~48 GiB GPU-addressable**, of which maybe 44 is comfortable alongside a desktop
 and the KV cache. Weights + KV cache + compute buffers all come out of this.
 
-Rule of thumb for a 32k-context Q4/Q6 model: **weights + 3–6 GB** of overhead.
+Rule of thumb for a 64k-per-slot window (`--ctx-size 131072 --parallel 2`) on a Q4/Q6 model:
+**weights + 7–9 GB** of KV cache and compute. `--cache-type-k/v q8_0` halves the KV half of
+that; KV is the part that scales with context, so it is the first thing to shrink.
 
 ## Coding (the reason the box exists)
 

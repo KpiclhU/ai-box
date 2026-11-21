@@ -34,9 +34,9 @@ Configuration lives in environment files, not in the units:
 To change models, edit `MODEL=` (an absolute path, no spaces) and
 `systemctl restart llama-server`. `LLAMA_EXTRA_ARGS` is split on whitespace by systemd,
 so it is the place for flags like `--ctx-size` and `--parallel`. Keep such values quoted
-(`LLAMA_EXTRA_ARGS="--ctx-size 32768 ..."`, as the installer writes them): systemd strips
+(`LLAMA_EXTRA_ARGS="--ctx-size 131072 ..."`, as the installer writes them): systemd strips
 the quotes, while a shell that reads the file — `./scripts/90-bench.sh` used to source it —
-would otherwise try to run `32768` as a command. Note that systemd does
+would otherwise try to run `131072` as a command. Note that systemd does
 **not** expand variables inside `EnvironmentFile` values — only `${VAR}` references in the
 unit's `ExecStart` are expanded, which is why `MODEL` is referenced there.
 
@@ -63,7 +63,7 @@ The machine has 64 GB total. Everything shares it:
 | Consumer | Typical |
 |---|---|
 | OS + desktop + browser | 4–8 GB |
-| `llama-server` with a 30B Q6_K at 32k | 25 GB weights + 4–6 GB KV/compute |
+| `llama-server` with a 30B Q6_K at 64k/slot (131072 total) | 25 GB weights + 6 GB KV + ~2 GB compute |
 | ComfyUI idle | ~2 GB |
 | ComfyUI running Flux fp16 | 30–34 GB peak |
 | Page cache for model files | whatever is left (good, it speeds reloads) |

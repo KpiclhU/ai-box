@@ -74,10 +74,34 @@ consecutive jobs slow down ~2.4× because the allocator is not flushed — call
 RDNA 3.5 has no FP8 matmul. Use fp16/bf16 or GGUF Q8_0. This is architectural, not a bug
 that will be fixed.
 
-## Huge context makes everything crawl
+## Context runs out sooner than `--ctx-size` suggests
 
-`-c 32768` is a deliberate default; `-c 131072` on a 30B model costs many GB of KV cache and
-competes with the image stack. Raise it only when you have measured free GTT.
+`--ctx-size` is the **total** KV cache, divided across the `--parallel` slots. `--ctx-size
+32768 --parallel 2` is a **16k window per request** — a coding agent burns through that in a
+few tool calls, then starts truncating history. The flag is not lying; the division is just
+not obvious.
+
+```text
+window per request = --ctx-size / --parallel
+```
+
+Read it off the running server instead of the flags (a model has to be loaded first):
+
+```bash
+curl -s localhost:8080/props | jq '.default_generation_settings.n_ctx'   # per slot
+curl -s localhost:8080/slots | jq '.[].n_ctx'                            # per slot, each
+journalctl -u llama-router -n 200 --no-pager | grep -E 'n_ctx|KV self size'
+```
+
+The repo default is `--ctx-size 131072`, i.e. 64k per request with `--parallel 2`. To double
+the window without touching memory, drop `--parallel` to 1 (you lose the second slot, so the
+bot and a coding agent then queue).
+
+What a big context costs, per token, on a 30B-A3B: **96 KiB** at f16, **48 KiB** at `q8_0`
+(the KV cache type needs `-fa on`). So 131072 total is 12 GB / 6 GB, and 262144 is 24 GB /
+12 GB out of ~48 GiB — the second only fits next to a 25 GB model, never next to Flux.
+Shrink `--ctx-size` before you raise `ttm.pages_limit`; more context competing with the image
+stack is the usual cause of a load that used to work now aborting.
 
 ## `llama-bench` / `llama-server`: `cudaMalloc failed: out of memory` at 48 GiB
 
@@ -186,7 +210,7 @@ hf download \
 ```
 
 And a 27B at Q8_0 is ~30 GB of the ~48 GiB GTT before any KV cache — it leaves nothing for a
-32k context next to ComfyUI. Q4_K_M or Q6_K is the sane pick here ([07-models.md](07-models.md)).
+64k-per-slot context next to ComfyUI. Q4_K_M or Q6_K is the sane pick here ([07-models.md](07-models.md)).
 
 ## Wi-Fi or Bluetooth disappears
 
@@ -226,7 +250,9 @@ journalctl -u ai-discord-bot -n 50 --no-pager
 - `LLM_MODEL` must match the `--alias` (or model id) that `/v1/models` reports.
 - Empty replies from a reasoning model: it spent the whole budget on `reasoning_content`.
   Raise `LLM_MAX_TOKENS` or disable thinking.
-- `400` about context length: the history plus prompt exceeded `-c`. `/reset` or raise `-c`.
+- `400` about context length: the history plus prompt exceeded the **per-slot** window
+  (`--ctx-size` ÷ `--parallel`), not `--ctx-size` itself. `/reset`, or raise the total and
+  restart — see "Context runs out sooner" above.
 
 ## Bot stream stalls mid-reply
 

@@ -136,7 +136,8 @@ If it prints tokens at a plausible rate, you are done with the hard part.
 llama-server \
   --model ~/ai/models/Qwen3-Coder-30B-A3B-Instruct-Q6_K.gguf \
   --host 127.0.0.1 --port 8080 \
-  --ctx-size 32768 \
+  --ctx-size 131072 \
+  --cache-type-k q8_0 --cache-type-v q8_0 \
   --n-gpu-layers 999 \
   --flash-attn on \
   --jinja \
@@ -149,11 +150,47 @@ llama-server \
 | `-ngl 999` | Offload everything; check the load log to confirm, don't assume |
 | `-fa on` | Flash attention; matters at long context |
 | `--jinja` | Required for real tool/function calling — needed by coding agents |
-| `-c 32768` | Context. Every doubling costs KV cache RAM; 32k is a sane coding default |
-| `-np 2` | Two concurrent slots (the bot's semaphore should match) |
+| `-c 131072` | **Total** context for all slots — the window per request is this ÷ `-np` (below) |
+| `-np 2` | Two concurrent slots, so 131072 / 2 = **64k per request** |
+| `--cache-type-k/-v q8_0` | Halves the KV cache, which is what a big context actually costs. Needs `-fa on` |
 | `--alias` | The model name clients see in `/v1/models` |
 | `-ub`/`-b` | Micro-batch; tune for prefill. Try `-b 2048 -ub 512`, lower if allocations fail |
 | `--no-mmap` | **Not** a blanket win. Try it only for slow huge-model loads on ROCm |
+
+## `--ctx-size` is a total, not a per-request window
+
+The one thing that surprises everybody on this box: `--ctx-size 32768 --parallel 2` does
+**not** give two 32k conversations. llama.cpp allocates one KV cache of `--ctx-size` tokens
+and splits it across the slots, so each request gets **16k** — and an agentic session (system
+prompt + tool schemas + a few file reads) fills that in a handful of turns and starts
+compacting or failing.
+
+```text
+window per request = --ctx-size / --parallel
+```
+
+Either raise the total or lower `--parallel`. Check what you actually got, once a model is
+loaded — these report the **per-slot** window, not the flag:
+
+```bash
+curl -s localhost:8080/props | jq '.default_generation_settings.n_ctx'
+curl -s localhost:8080/slots | jq '.[].n_ctx'
+journalctl -u llama-router -n 200 --no-pager | grep -E 'n_ctx|KV self size'
+```
+
+KV cache is the only thing stopping you going higher. For a 30B-A3B that is 96 KiB/token at
+f16, 48 KiB at `q8_0`:
+
+| `--ctx-size` | window @ `-np 2` | KV f16 | KV q8_0 |
+|---|---|---|---|
+| 32768 | 16384 | 3 GB | 1.5 GB |
+| 65536 | 32768 | 6 GB | 3 GB |
+| **131072** | **65536** | 12 GB | **6 GB** |
+| 262144 | 131072 | 24 GB | 12 GB |
+
+`131072` is the repo default: 64k per request with two slots, and still inside the ~48 GiB
+pool next to a 25 GB model and a 38 GB one. You can go to `262144` with `q8_0` KV on a 25 GB
+model; you cannot next to Flux. Go **down** before you touch `ttm.pages_limit`.
 
 Loopback only by default. If you want the box reachable from your LAN, put it behind a
 reverse proxy with auth rather than binding `0.0.0.0`.
@@ -180,7 +217,7 @@ Then add the flags to `LLAMA_EXTRA_ARGS` and restart:
 
 ```bash
 # ~/.config/ai-box/llama-server.env
-LLAMA_EXTRA_ARGS="--ctx-size 32768 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2 --alias local --spec-type draft-mtp --spec-draft-n-max 3"
+LLAMA_EXTRA_ARGS="--ctx-size 131072 --cache-type-k q8_0 --cache-type-v q8_0 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2 --alias local --spec-type draft-mtp --spec-draft-n-max 3"
 ```
 
 Measured on `gfx1151`, single request, Qwen3.8-27B Q6 (~24 GB):
@@ -290,8 +327,10 @@ A 30B-A3B MoE at Q6_K is the sweet spot: ~25 GB of weights, ~60–75 tok/s decod
 quality for real editing work. Dense models of the same size are 3–5× slower for the same
 quality — on this hardware, **MoE wins**.
 
-Long agentic sessions are limited by context, not speed: at 32k context, a big refactor will
-push against the window. Raise `-c` only after checking free RAM.
+Long agentic sessions are limited by the per-request window, not by speed. At the default
+(`--ctx-size 131072 --parallel 2`) each request gets 64k; `--parallel 1` turns the same
+allocation into a single 128k request, at the cost of the bot's second slot. Raise the total
+only after checking free GTT — the table above says exactly what it costs.
 
 ## Multiple models
 
