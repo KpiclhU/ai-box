@@ -221,6 +221,7 @@ scripts/
   96-comfy-models.sh          list/download/delete ComfyUI models, free its GTT
   97-comfy-gen.sh             one image through ComfyUI — also Llama Chat's "draw" tool
   comfy-mcp.py                stdio MCP server: image generation as a model tool
+  windows-seed-usb.ps1        puts the answer file on an ISO-mode USB stick (Windows)
 systemd/
   llama-server.service        :8080, one model
   llama-router.service        :8080, every GGUF in ~/ai/models (alternatives to each other)

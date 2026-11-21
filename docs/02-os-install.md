@@ -203,9 +203,15 @@ one of those files.
    default). Check the download first, since a corrupt ISO installs a corrupt system:
    `certutil -hashfile ubuntu-26.04-live-server-amd64.iso SHA256` against the checksum on the
    Ubuntu download page.
-2. Fill in the two values in `autoinstall\user-data` (below), then rename it to
-   `autoinstall.yaml` and copy it to the **root** of the stick — the same folder that holds
-   `casper\`, `boot\`, `EFI\` and `install\`:
+2. Fill in the two values in `autoinstall\user-data` (below), then put it on the stick as
+   `autoinstall.yaml`, at the **root** — the same folder that holds `casper\`, `boot\` and
+   `EFI\`. The helper checks the stick first and does the copy (use your stick's letter):
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\windows-seed-usb.ps1 -Root D:
+   ```
+
+   or, by hand:
 
    ```powershell
    Copy-Item .\autoinstall\user-data D:\autoinstall.yaml
@@ -218,6 +224,16 @@ one of those files.
    line is a plain YAML comment and is ignored in this position; `meta-data` is only used by
    the cloud-init route, so it is not needed here.
 3. Boot the stick (F12 for this board's boot menu) and walk away. It installs, then powers off.
+
+**If it boots to the interactive installer,** subiquity never saw the file, and the cause is
+almost always visible in Explorer: `casper\`, `boot\`, `EFI\` and `autoinstall.yaml` must sit
+side by side at the stick's root. A **DD Image mode** stick shows no folders at all (Windows may
+even offer to format it), `autoinstall.yaml.txt` is a different file (`dir /x` shows the real
+name), and a copy dropped into a subfolder is not at the root either. The helper above checks
+all three, and it also adds `autoinstall` to the `linux` line in `boot\grub\grub.cfg` — before
+that line's `---`, because everything after `---` is not passed to the kernel. With the argument
+present subiquity starts autoinstall for certain and says so loudly when the file is missing,
+instead of quietly falling back to the menus.
 
 If that stick does not boot, write it again in DD mode — and then you do need a second stick,
 because DD mode leaves you no room for `autoinstall.yaml`.
