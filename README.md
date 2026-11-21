@@ -94,6 +94,12 @@ lspci -nn | grep -i vga       # Radeon 8060S, device id 1002:...
 Step-by-step, including the ISO/USB, partitioning and first-boot checks:
 [docs/02-os-install.md](docs/02-os-install.md)
 
+**Install it unattended if you like.** The Server installer reads a YAML answer file, and
+`autoinstall/user-data` is one for this box — hostname, user, SSH keys, whole-disk ext4,
+toolchain and the GPU memory args already set. The recipe is in
+[docs/02](docs/02-os-install.md#unattended-install-autoinstall): one USB stick with the file
+added to it and no keystrokes at all, or two sticks and one `e`-and-append at the GRUB menu.
+
 ### Phase 2 — Give the GPU the memory (20 min)
 
 ```bash
@@ -200,6 +206,9 @@ docs/                         the deep-dive pages, in reading order
   08-operations.md            services, updates, backups, coexistence
   09-troubleshooting.md       symptom → cause → fix
   10-webui-and-models.md      built-in chat UI, MCP connectors, router mode
+autoinstall/
+  user-data                   Ubuntu Server autoinstall answer file (unattended install)
+  meta-data                   cloud-init meta-data for the CIDATA seed volume
 scripts/
   00-preflight.sh             read-only health/report
   10-gpu-memory.sh            sets ttm.pages_limit via GRUB

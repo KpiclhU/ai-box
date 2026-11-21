@@ -1,0 +1,78 @@
+#cloud-config
+# ai-box — Ubuntu Server 26.04 unattended install (subiquity autoinstall).
+#
+# Copy this to a vfat volume labelled CIDATA as `user-data` (with `meta-data` next to it),
+# boot the live-server ISO, and append ` autoinstall` to the GRUB `linux` line.
+# Full recipe: docs/02-os-install.md -> "Unattended install (autoinstall)".
+#
+# Replace the two marked values before use:
+#   identity.password    printf '%s' "$PW" | openssl passwd -6 -stdin
+#   ssh.authorized-keys  cat ~/.ssh/id_ed25519.pub
+autoinstall:
+  version: 1
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+  timezone: Etc/UTC
+
+  identity:
+    hostname: ai-box
+    username: ai-user
+    # SHA-512 crypt hash, single-quoted so the $ signs survive YAML.
+    password: '$6$REPLACEME$paste.the.output.of.openssl.passwd.6.here'
+
+  ssh:
+    install-server: true
+    allow-pw: false
+    authorized-keys:
+      - ssh-ed25519 AAAAAREPLACEMEWITHYOURPUBLICKEY user@laptop
+
+  # Ethernet only, DHCP. Server does not configure Wi-Fi; use a cable for this build.
+  network:
+    version: 2
+    ethernets:
+      lan:
+        match:
+          name: "en*"
+        dhcp4: true
+
+  # Whole-disk ext4, no swap partition. `largest` keeps the CIDATA stick out of the running.
+  # Use `lvm` instead of `direct` if you want the interactive installer's default layout.
+  storage:
+    layout:
+      name: direct
+      match:
+        size: largest
+
+  packages:
+    - build-essential
+    - git
+    - cmake
+    - ninja-build
+    - pkg-config
+    - curl
+    - wget
+    - jq
+    - htop
+    - pciutils
+    - lm-sensors
+    - fwupd
+    - pipx
+    - python3-venv
+    - python3-pip
+    - libvulkan-dev
+    - vulkan-tools
+    - mesa-vulkan-drivers
+    - glslc
+    - libssl-dev
+
+  # Does the Phase 2 work early: 48 GiB of GPU-addressable memory via GRUB, and the groups
+  # the preflight script checks. Change both numbers together if you change the GiB.
+  late-commands:
+    - curtin in-target --target=/target -- sed -i 's|^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"|GRUB_CMDLINE_LINUX_DEFAULT="\1 ttm.pages_limit=12582912 ttm.page_pool_size=12582912"|' /etc/default/grub
+    - curtin in-target --target=/target -- update-grub
+    - curtin in-target --target=/target -- sh -c 'usermod -aG video ai-user; usermod -aG render ai-user || true'
+
+  # Power off rather than reboot: with the installer USB still first in boot order a reboot
+  # would install the machine again, forever. Pull the sticks, then turn it on.
+  shutdown: poweroff

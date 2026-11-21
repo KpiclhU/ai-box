@@ -136,6 +136,158 @@ wrong tool; on Desktop it only works at the console or with
 `vulkaninfo` checks above instead; `scripts/00-preflight.sh` detects the missing session and
 skips GL checks automatically.
 
+## Unattended install (autoinstall)
+
+Yes. Ubuntu Server's installer (subiquity) reads a YAML answer file and can install with nobody
+at the keyboard. It is the `autoinstall` format Canonical documents as "unattended",
+"hands-off" or "preseeded", supported since 20.04 and current on 26.04. `autoinstall/user-data`
+in this repo is a ready answer file for this machine: hostname `ai-box`, user `ai-user`, OpenSSH
+with keys only, whole-disk ext4, DHCP on Ethernet, the toolchain from the next section
+pre-installed, and the Phase 2 GRUB arguments already applied.
+
+### What still needs a human
+
+Neither of these is an installer menu:
+
+1. **BIOS** — the 512 MB iGPU carve-out and the boot order ([01](01-hardware-and-bios.md)). No
+   answer file can do that.
+2. **The seed medium** — the answer file has to reach the installer, and getting it there is
+   the one piece of preparation: one file added to the installer stick itself (Windows, below),
+   a second USB stick, a repacked ISO, or PXE.
+
+Plus two values of your own, once: a password hash and your SSH public key.
+
+### Two USB sticks (Linux)
+
+```bash
+# 1. installer USB, as usual
+sudo dd if=ubuntu-26.04-live-server-amd64.iso of=/dev/sdX bs=8M status=progress oflag=direct
+
+# 2. seed USB: any small stick. The volume label must be exactly CIDATA and it must be
+#    the FIRST partition — cloud-init looks for the label, not the device.
+sudo wipefs -a /dev/sdY
+sudo mkfs.vfat -n CIDATA /dev/sdY1
+sudo mount /dev/sdY1 /mnt
+sudo cp autoinstall/user-data autoinstall/meta-data /mnt/
+sudo umount /mnt
+```
+
+Fill in your own values in `autoinstall/user-data` before copying it:
+
+```bash
+read -rsp 'login password: ' PW; echo
+printf '%s' "$PW" | openssl passwd -6 -stdin     # -> identity.password (keep the quotes)
+cat ~/.ssh/id_ed25519.pub                         # -> ssh.authorized-keys
+```
+
+Boot the installer USB. At the GRUB menu highlight **Try or Install Ubuntu Server**, press
+**`e`**, append ` autoinstall` to the `linux` line, press **Ctrl-X**. That keypress is the only
+interaction, and it is deliberate: subiquity will not wipe a disk from a stray seed USB unless
+`autoinstall` is on the kernel command line. Without it you get the prompt
+*"Continue with autoinstall? (yes|no)"*, which is exactly the thing to avoid.
+
+When it finishes the machine **powers off**; it does not reboot, because the installer USB is
+still first in boot order and a reboot would reinstall it in a loop. Pull both sticks, power on.
+
+### From Windows (the ISO is on the Windows machine)
+
+**One stick is enough** — use this if you only own one. The reason it works is Rufus's two
+writing modes: **ISO Image mode** puts the ISO's *files* on an ordinary writable FAT32 stick, so
+anything left over after the write can be added; **DD Image mode** copies the ISO bit for bit and
+leaves a read-only ISO9660 volume with nowhere to put anything. The answer file only has to be
+one of those files.
+
+1. [Rufus](https://rufus.ie): *Device* = the stick, *Boot selection* =
+   `ubuntu-26.04-live-server-amd64.iso`, *Partition scheme* GPT / *Target system* UEFI,
+   **START**, and when it offers *ISO Image mode / DD Image mode* take **ISO Image mode** (the
+   default). Check the download first, since a corrupt ISO installs a corrupt system:
+   `certutil -hashfile ubuntu-26.04-live-server-amd64.iso SHA256` against the checksum on the
+   Ubuntu download page.
+2. Fill in the two values in `autoinstall\user-data` (below), then rename it to
+   `autoinstall.yaml` and copy it to the **root** of the stick — the same folder that holds
+   `casper\`, `boot\`, `EFI\` and `install\`:
+
+   ```powershell
+   Copy-Item .\autoinstall\user-data D:\autoinstall.yaml
+   ```
+
+   Subiquity reads a file from the **installation medium** directly, so there is no `CIDATA`
+   label to get right, no second stick, and no keystrokes at all — it does not even ask
+   *"Continue with autoinstall? (yes|no)"*, because that prompt exists to stop a stray seed from
+   wiping a disk and a file sitting inside the medium is not that. The `#cloud-config` first
+   line is a plain YAML comment and is ignored in this position; `meta-data` is only used by
+   the cloud-init route, so it is not needed here.
+3. Boot the stick (F12 for this board's boot menu) and walk away. It installs, then powers off.
+
+If that stick does not boot, write it again in DD mode — and then you do need a second stick,
+because DD mode leaves you no room for `autoinstall.yaml`.
+
+**If you do have a second stick,** the seed route still works from Windows. The seed stick only
+has to be FAT32, labelled `CIDATA`, with `user-data` and `meta-data` at its root: right-click it
+in Explorer > **Format** > *File system* FAT32, *Volume label* `CIDATA`, *Quick format*, then
+
+```powershell
+Copy-Item .\autoinstall\user-data, .\autoinstall\meta-data -Destination E:\
+```
+
+If Explorer offers only exFAT/NTFS for that stick, `diskpart` does it (`clean` erases whatever
+you point it at — read the drive number out loud first):
+
+```
+diskpart
+list disk
+select disk N            REM the SEED stick -- not the installer, not your SSD
+clean
+create partition primary
+format fs=fat32 quick label=CIDATA
+assign
+exit
+```
+
+Then at the GRUB menu press **`e`**, append ` autoinstall` to the `linux` line (before its
+`---`), and press **Ctrl-X**.
+
+**Fill in the two values first.** Use **Git Bash** — it ships `openssl`, and neither PowerShell
+nor `cmd` has a sha512-crypt tool:
+
+```bash
+read -rsp 'login password: ' PW; echo
+printf '%s' "$PW" | openssl passwd -6 -stdin      # -> identity.password, keep the quotes
+cat "$USERPROFILE/.ssh/id_ed25519.pub"            # -> ssh.authorized-keys
+```
+
+No key yet? `ssh-keygen -t ed25519` in the same window, then run the `cat` again. Edit
+`autoinstall\user-data` in Notepad or VS Code and save it as **UTF-8 without BOM** (Windows 10+
+Notepad's default; Word and WordPad will add a BOM and subiquity will not see
+`#cloud-config`). CRLF line endings are fine.
+
+### Baking it into the ISO (no keystrokes at all)
+
+If you would rather never touch the keyboard again — reinstalling later, or a second identical
+box — put an `autoinstall.yaml` at the **root of the installation medium** (the directory
+holding `casper/`) and add `autoinstall` to the `linux` line in the ISO's
+`boot/grub/grub.cfg`, then repack it with `xorriso`. Subiquity reads a file from the medium
+directly, without cloud-init and without the confirmation prompt. You must carry the El Torito
+and UEFI boot images across (`-isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin`, `-eltorito-boot
+boot/grub/i386-pc/eltorito.img -no-emul-boot`, `-eltorito-alt-boot -e boot/grub/efi.img
+-no-emul-boot -isohybrid-gpt-basdat`), so boot the repacked image in a VM before trusting it.
+For one machine this is more work than the `e` keypress, which is why it is not scripted here.
+
+### What the answer file does that the manual steps below would otherwise do
+
+- `storage.layout: direct` with `match: {size: largest}` — plain ext4 on the whole 2 TB, and
+  `largest` so the seed stick is never a candidate. Change `direct` to `lvm` to keep the
+  interactive installer's default layout.
+- `late-commands` writes `ttm.pages_limit` / `ttm.page_pool_size` for 48 GiB into
+  `/etc/default/grub` and runs `update-grub`, so after the first boot `00-preflight.sh` passes
+  the memory check and you can skip `sudo ./scripts/10-gpu-memory.sh 48`. It also adds
+  `ai-user` to `render,video` (otherwise a `usermod` + re-login is needed).
+- `shutdown: poweroff`, as above.
+
+Deliberately **not** automated, because each needs a decision or a network fetch:
+`fwupdmgr update`, `sensors-detect`, `pipx install huggingface_hub`, and the zram stanza.
+Those stay manual, in the sections that follow.
+
 ## Swap: zram, not a swap partition
 
 Neither edition should get a big disk swap file. On a unified-memory box the swap device and
