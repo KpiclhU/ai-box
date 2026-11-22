@@ -329,7 +329,7 @@ quality — on this hardware, **MoE wins**.
 
 Long agentic sessions are limited by the per-request window, not by speed. At the default
 (`--ctx-size 131072 --parallel 2`) each request gets 64k; `--parallel 1` turns the same
-allocation into a single 128k request, at the cost of the bot's second slot. Raise the total
+allocation into a single 128k request, at the cost of the second slot. Raise the total
 only after checking free GTT — the table above says exactly what it costs.
 
 ## Multiple models

@@ -10,9 +10,15 @@
 # This box keeps no proxy of its own. It binds llama-server and ComfyUI to the
 # LAN, lets only the Caddy host through the firewall, and writes the site blocks
 # that the Caddy box should import. Authentication happens there.
+#
+# The bind only happens once a default-deny firewall is in place: a wildcard bind
+# with nothing in front of it is reachable by every device on the network. With
+# no such firewall this script leaves both services on 127.0.0.1 and exits
+# non-zero. If something else already limits the ports (firewalld, nftables, a
+# VLAN ACL), assert that instead:
+#   sudo AI_BOX_UNFIREWALLED=1 ./scripts/80-lan-access.sh --proxy 192.168.1.10
 set -euo pipefail
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_USER="${SUDO_USER:-${USER:-$(id -un)}}"
 TARGET_HOME="$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f6 || true)"
 [ -n "$TARGET_HOME" ] || TARGET_HOME="${HOME}"
@@ -31,9 +37,14 @@ DRY_RUN=0
 REVERT=0
 GENERATED=0
 
-usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit "${1:-0}"; }
 die() { echo "error: $*" >&2; exit 1; }
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+
+ufw_active() { command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; }
+# "Active" is not enough: with a default-allow incoming policy an `allow from`
+# rule describes one of the many hosts that may connect, so it restricts nothing.
+ufw_default_deny() { ufw status verbose 2>/dev/null | grep -q '^Default: deny (incoming)'; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -89,19 +100,33 @@ active_llama_unit() {
   fi
 }
 
+# Restart one unit, and only if it is actually running. Called solely for files
+# whose HOST changed, so a refused run — or a re-run that changes nothing — leaves
+# a loaded model alone.
+restart_unit() { # <unit>
+  if [ "$1" = comfyui ]; then
+    if systemctl is-enabled --quiet comfyui 2>/dev/null || systemctl is-active --quiet comfyui 2>/dev/null; then
+      systemctl restart comfyui && echo "  restarted comfyui (HOST now $(env_get "$COMFY_ENV" HOST))"
+    else
+      echo "  comfyui is not enabled; HOST applies on next start"
+    fi
+  elif systemctl is-active --quiet "$1" 2>/dev/null; then
+    systemctl restart "$1" && echo "  restarted $1 (HOST now $(env_get "$CONFIG_DIR/$1.env" HOST))"
+  else
+    echo "  $1 is not running; HOST applies on next start"
+  fi
+}
+
+# Revert always moves the files back, so it restarts whatever is up.
 restart_units() {
   local unit
   unit="$(active_llama_unit)"
   if [ -n "$unit" ]; then
-    systemctl restart "$unit" && echo "restarted $unit (HOST now $(env_get "$CONFIG_DIR/$unit.env" HOST))"
+    restart_unit "$unit"
   else
     echo "llama-server/llama-router are not running; the HOST change applies on next start"
   fi
-  if systemctl is-enabled --quiet comfyui 2>/dev/null || systemctl is-active --quiet comfyui 2>/dev/null; then
-    systemctl restart comfyui && echo "restarted comfyui (HOST now $(env_get "$COMFY_ENV" HOST))"
-  else
-    echo "comfyui is not enabled; the HOST change applies on next start"
-  fi
+  restart_unit comfyui
 }
 
 # ---- revert -----------------------------------------------------------------
@@ -217,22 +242,64 @@ EOF
   fi
 }
 
-ufw_active() { command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; }
+# ---- firewall, BEFORE the bind ----------------------------------------------
+# A wildcard bind with no firewall in front of it stays reachable by every device
+# on the network for as long as the services run, so the rules go in first and
+# the bind only follows if they are real.
+say "Firewall"
+LAN_BIND=0
+if ufw_active && ufw_default_deny; then
+  GUARD=ufw
+elif [ "${AI_BOX_UNFIREWALLED:-0}" = 1 ]; then
+  GUARD=override
+elif ufw_active; then
+  GUARD=allow-policy
+elif command -v ufw >/dev/null 2>&1; then
+  GUARD=inactive
+else
+  GUARD=absent
+fi
+
+case "$GUARD" in
+  ufw)
+    LAN_BIND=1
+    if [ "$DRY_RUN" -eq 1 ]; then
+      echo "  would allow $PROXY -> $LLM_PORT/tcp, $COMFY_PORT/tcp (incoming denied by default)"
+    else
+      ufw allow from "$PROXY" to any port "$LLM_PORT" proto tcp >/dev/null
+      ufw allow from "$PROXY" to any port "$COMFY_PORT" proto tcp >/dev/null
+      echo "  allowed $PROXY -> $LLM_PORT/tcp, $COMFY_PORT/tcp; incoming denied by default"
+      ufw status | grep -E "($LLM_PORT|$COMFY_PORT)/tcp" | sed 's/^/    /' || true
+    fi
+    ;;
+  override)
+    LAN_BIND=1
+    echo "  AI_BOX_UNFIREWALLED=1: no ufw rule added — :$LLM_PORT and :$COMFY_PORT"
+    echo "  must already be limited to $PROXY by something else. Verify that first."
+    ;;
+  allow-policy)
+    echo "  not binding the LAN: ufw is active but its default incoming policy is"
+    echo "  allow, so 'ufw allow from $PROXY' would not restrict anything."
+    ;;
+  inactive)
+    echo "  not binding the LAN: ufw is installed but not active, so the ports would"
+    echo "  be reachable from the whole network."
+    ;;
+  absent)
+    echo "  not binding the LAN: ufw is not installed, so the ports would be"
+    echo "  reachable from the whole network."
+    ;;
+esac
+
+if [ "$LAN_BIND" -eq 1 ]; then HOST_=0.0.0.0; else HOST_=127.0.0.1; fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
   say "Would change in $CONFIG_DIR"
-  echo "  llama-server.env / llama-router.env: HOST=0.0.0.0   (port $LLM_PORT)"
-  echo "  comfyui.env:                        HOST=0.0.0.0   (port $COMFY_PORT)"
-  echo "  then restart the running llama unit and comfyui"
+  echo "  llama-server.env / llama-router.env: HOST=$HOST_   (port $LLM_PORT)"
+  echo "  comfyui.env:                        HOST=$HOST_   (port $COMFY_PORT)"
+  echo "  then restart only the units whose HOST changed"
   say "Would write $SNIPPET"
   render_snippet
-  say "Firewall"
-  if ufw_active; then
-    echo "  ufw allow from $PROXY to any port $LLM_PORT proto tcp"
-    echo "  ufw allow from $PROXY to any port $COMFY_PORT proto tcp"
-  else
-    echo "  ufw is NOT active — nothing would restrict :$LLM_PORT / :$COMFY_PORT to $PROXY"
-  fi
   [ "$HASH_OK" -eq 1 ] || echo "
   warning: no caddy/htpasswd/python-bcrypt here, so the hash is a placeholder.
   Run on the Caddy box: caddy hash-password --plaintext '<password>'"
@@ -240,13 +307,23 @@ if [ "$DRY_RUN" -eq 1 ]; then
 fi
 
 # ---- apply ------------------------------------------------------------------
-say "Binding the services to the LAN"
+say "HOST=$HOST_ in the service env files"
+CHANGED=()
 for f in "$LLAMA_ENV" "$ROUTER_ENV" "$COMFY_ENV"; do
   [ -f "$f" ] || continue
-  set_env "$f" HOST 0.0.0.0
-  echo "  $(basename "$f"): HOST=0.0.0.0"
+  if [ "$(env_get "$f" HOST)" = "$HOST_" ]; then
+    echo "  $(basename "$f"): already HOST=$HOST_"
+    continue
+  fi
+  set_env "$f" HOST "$HOST_"
+  echo "  $(basename "$f"): HOST=$HOST_"
+  CHANGED+=("$(basename "$f" .env)")
 done
-restart_units
+if [ ${#CHANGED[@]} -eq 0 ]; then
+  echo "  nothing to restart — every service was already on $HOST_"
+else
+  for u in "${CHANGED[@]}"; do restart_unit "$u"; done
+fi
 
 say "Writing the site blocks for the Caddy box"
 install -d -o "$TARGET_USER" -g "$TARGET_USER" -m 755 "$CONFIG_DIR" 2>/dev/null || true
@@ -255,15 +332,29 @@ chown "$TARGET_USER:$TARGET_USER" "$SNIPPET" 2>/dev/null || true
 chmod 644 "$SNIPPET"
 echo "  $SNIPPET"
 
-say "Firewall"
-if ufw_active; then
-  ufw allow from "$PROXY" to any port "$LLM_PORT" proto tcp >/dev/null
-  ufw allow from "$PROXY" to any port "$COMFY_PORT" proto tcp >/dev/null
-  echo "  allowed $PROXY -> $LLM_PORT/tcp, $COMFY_PORT/tcp (nothing else changed)"
-  UFW_DONE=1
-else
-  UFW_DONE=0
-  echo "  ufw is not active, so :$LLM_PORT and :$COMFY_PORT are open to the whole LAN."
+if [ "$LAN_BIND" -eq 0 ]; then
+  cat <<EOF
+
+Nothing was published: llama-server and ComfyUI are back on 127.0.0.1, so Caddy
+will answer 502. That is deliberate — a wildcard bind is only safe once the rest
+of the network is blocked, and nothing here is doing the blocking yet.
+
+Fix it on this box, then re-run this script:
+
+  sudo ufw allow OpenSSH
+  sudo ufw default deny incoming
+  sudo ufw enable
+  sudo ufw allow from $PROXY to any port $LLM_PORT proto tcp
+  sudo ufw allow from $PROXY to any port $COMFY_PORT proto tcp
+
+Check: ufw status verbose     # want: Status: active, Default: deny (incoming)
+
+If a different firewall (firewalld, nftables, a VLAN ACL) already limits these
+ports to $PROXY, assert that instead and re-run:
+
+  sudo AI_BOX_UNFIREWALLED=1 $0 --proxy $PROXY
+EOF
+  exit 1
 fi
 
 # ---- report -----------------------------------------------------------------
@@ -314,24 +405,11 @@ Change it with: sudo $0 --proxy $PROXY --user $CADDY_USER --password 'new one'
 EOF
 fi
 
-if [ "$UFW_DONE" -eq 0 ]; then
-  cat <<EOF
-Because no firewall is restricting these ports, anything on your network can use
-the model. To limit it to the Caddy host:
-  sudo ufw allow OpenSSH
-  sudo ufw allow from $PROXY to any port $LLM_PORT proto tcp
-  sudo ufw allow from $PROXY to any port $COMFY_PORT proto tcp
-  sudo ufw default deny incoming
-  sudo ufw enable
-then re-run this script so the rules are verified. Check with: ufw status
-
-EOF
-fi
-
 cat <<EOF
 Notes:
   - Undo everything here: sudo $0 --revert
   - Do not port-forward ${LLM_PORT}/${COMFY_PORT} on your router; only the Caddy
     box should reach them.
-  - The Discord bot is unaffected (it talks to 127.0.0.1).
+  - Open WebUI is unaffected (it talks to 127.0.0.1) — but do not run this legacy layout
+    alongside scripts/81-front-door.sh; they publish different surfaces.
 EOF

@@ -94,8 +94,8 @@ journalctl -u llama-router -n 200 --no-pager | grep -E 'n_ctx|KV self size'
 ```
 
 The repo default is `--ctx-size 131072`, i.e. 64k per request with `--parallel 2`. To double
-the window without touching memory, drop `--parallel` to 1 (you lose the second slot, so the
-bot and a coding agent then queue).
+the window without touching memory, drop `--parallel` to 1 (you lose the second slot, so a
+long run and a coding agent then queue).
 
 What a big context costs, per token, on a 30B-A3B: **96 KiB** at f16, **48 KiB** at `q8_0`
 (the KV cache type needs `-fa on`). So 131072 total is 12 GB / 6 GB, and 262144 is 24 GB /
@@ -229,40 +229,59 @@ Framework firmware issue linked to **large custom iGPU memory carve-outs**. Set 
 iGPU Memory Size back to 512 MB / Auto and rely on GTT instead
 ([03-gpu-memory.md](03-gpu-memory.md)). Also check the BIOS is ≥ 3.06.
 
-## Discord bot: slash commands don't appear
+## Caddy answers 502 for ai.pilchlab.ca
 
-- `DISCORD_GUILD_ID` set? Guild commands are instant; global ones are not.
-- Invited with the `applications.commands` scope?
-- You have hit **200 command creates/day/guild** — this resets on a rolling basis. Stop
-  restarting the bot if `tree.sync()` runs on every start.
-- The bot is `Restart=always`; a crash-looping bot can burn the daily create budget. Check
-  `journalctl -u ai-discord-bot` for the crash first.
-
-## Bot replies are empty, or never arrive
+The VM reached nothing on the box. In order:
 
 ```bash
-curl -s localhost:8080/health
-curl -s localhost:8080/v1/models | jq
-journalctl -u ai-discord-bot -n 50 --no-pager
+# on the box
+ss -ltnp | grep ':3000'                     # want 0.0.0.0:3000 (or *:3000), not nothing
+systemctl status open-webui --no-pager
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/
+# from the Caddy VM
+curl -sS -o /dev/null -w '%{http_code}\n' http://192.168.150.40:3000/
 ```
 
-- `503` from `/health` = model still loading.
-- `LLM_MODEL` must match the `--alias` (or model id) that `/v1/models` reports.
-- Empty replies from a reasoning model: it spent the whole budget on `reasoning_content`.
-  Raise `LLM_MAX_TOKENS` or disable thinking.
-- `400` about context length: the history plus prompt exceeded the **per-slot** window
-  (`--ctx-size` ÷ `--parallel`), not `--ctx-size` itself. `/reset`, or raise the total and
-  restart — see "Context runs out sooner" above.
+- `connection refused` from the VM: Open WebUI is down, the ufw rule is missing, or the env still
+  says `HOST=127.0.0.1`. `81-front-door.sh` leaves it on loopback **on purpose** when no
+  default-deny firewall covers `:3000` — look for `Nothing was published` in its output, then
+  `sudo ufw allow OpenSSH && sudo ufw default deny incoming && sudo ufw enable` and run it again.
+- `0.0.0.0:3000` but a laptop that is not the Caddy VM can still open it: ufw's default incoming
+  policy is allow, so the `from` rule restricts nothing. `ufw status verbose` shows it; fix with
+  `sudo ufw default deny incoming`.
+- Timeout from the VM but 200 on the box: a firewall in between — check the Proxmox VM's own
+  rules, not just the box's.
+- 502 only after a reboot: `open-webui` failed to start; `journalctl -u open-webui -n 50`.
 
-## Bot stream stalls mid-reply
+## The browser warns about the certificate
 
-A short `httpx` read timeout. The bot sets `read=None` for exactly this reason; if you edited
-it, put it back. Prompt processing on a large context can be silent for 30+ seconds.
+Expected until Caddy's local CA is trusted on that PC. Export it from the VM and install it:
 
-## Discord rate limits / edits lag
+```bash
+sudo cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt > root.crt
+certutil -addstore -f Root root.crt      # Windows, Administrator prompt
+```
 
-`429`s in the log mean edits are too frequent. The bot gates at 1.2 s; do not lower it. Also
-check you are not passing the same message to multiple bots.
+Do not click through the warning instead — it hides the day a real certificate breaks.
+
+## Open WebUI loads, but there are no models
+
+- The connection is **Settings → Admin → Connections → OpenAI-compatible**, base URL
+  `http://127.0.0.1:8080/v1`. Not `https`, not a trailing path.
+- `curl -s localhost:8080/health` — `503` means the model is still loading, and the model list
+  is empty until it is `ok`.
+- In router mode the id is the `.gguf` file name; the connection lists whatever
+  `/v1/models` reports, so refresh it after a swap.
+
+## Open WebUI: image generation fails
+
+| Message / symptom | Cause |
+|---|---|
+| `Invalid workflow` on import | the UI-format file, not the API-format one. Re-export with *Save (API Format)* |
+| Nothing happens when you send | the **Image** toggle is off in the message bar's Integrations menu, or the model lacks the Image Generation capability (*Workspace → Models → Edit*) |
+| Error from ComfyUI in the log | the checkpoint name in the workflow does not exist in `comfyui/models/checkpoints`, or a Flux component file is missing |
+| Generation succeeds, picture never appears | Caddy is buffering: the site block needs `flush_interval -1` |
+| Very slow first image | ComfyUI is loading weights, and possibly evicting the LLM. Wait; then unload the model for Flux jobs |
 
 ## `fwupdmgr` finds nothing
 

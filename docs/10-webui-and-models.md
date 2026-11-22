@@ -1,8 +1,12 @@
 # 10 — Web UI, connectors and model management
 
+> **The household front door is Open WebUI** ([12](12-deployment-and-client.md)): accounts,
+> chat and images on `:3000` behind the Caddy VM. This page documents llama.cpp's own UI and APIs — the
+> admin/debug surface and the model-management features the front door does not replace.
+
 Three things people ask for after the model answers: a chat window, tools the model can call,
-and a way to see the whole model library without editing a unit file. On this box all three
-come from llama.cpp itself; the heavyweight alternatives are at the bottom.
+and a way to see the whole model library without editing a unit file. On this box the first
+two are covered by Open WebUI; the llama.cpp features below remain the admin path.
 
 Everything here stays on loopback and is reached from your laptop over the tunnel from
 [docs/04](04-llm-stack.md):
@@ -44,12 +48,64 @@ for the ComfyUI side (`scripts/96-comfy-models.sh`), are in
 [05-image-generation.md](05-image-generation.md#getting-an-image-out-of-the-chat-window).
 
 The shell tool is a real hazard: `--tools`/`--agent` expose command execution over the API.
-llama-server pins `--cors-origins` to localhost when they are on, and refuses non-loopback
-binds without `--allow-unauthenticated-tools` — leave that alone unless the box is isolated.
+llama-server pins `--cors-origins` to localhost when they are on, and refuses a non-loopback
+bind without either an `--api-key` or `--allow-unauthenticated-tools` — the key is the one to
+use.
+
+### Server tools: files, shell and the internet
+
+`--tools` switches on llama-server's built-in tools. The set is deliberately minimal, and
+there is **no web-search or fetch tool** — internet access is `exec_shell_command` running
+`curl` as `ai-user` on this box, with whatever network the box has:
+
+| Tool | What it does |
+|---|---|
+| `read_file` | file contents, optionally a 1-based line range (64 MB cap) |
+| `file_glob_search`, `grep_search` | find files by glob; regex search with context lines |
+| `exec_shell_command` | one shell command: `curl`, `git`, `python3`, `97-comfy-gen.sh …` |
+| `write_file`, `edit_file` | create a file; apply an edit to an existing one |
+| `get_info` | `uname -a` and the working directory the tools run in |
+
+```
+# ~/.config/ai-box/llama-router.env   (single-model unit: llama-server.env)
+LLAMA_EXTRA_ARGS="--ctx-size 131072 --cache-type-k q8_0 --cache-type-v q8_0 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2 --mcp-servers-config /home/ai-user/.config/ai-box/mcp.json --api-key KEY --cors-origins https://ai-chat.example.com --tools all"
+```
+
+`all` is shorthand; name them to leave some out
+(`--tools read_file,file_glob_search,grep_search,get_info`). `exec_shell_command` is not a
+lesser tool — one command can write anything — so a subset without it is the only
+read-only variant.
+
+What to know before switching it on:
+
+- **The agent loop lives in the browser.** Llama Chat fetches `GET /tools`, offers those
+  definitions to the model, and `POST`s each call back. llama.cpp keeps no server-side loop
+  on purpose, so anything that talks to `/v1` directly — your editor, a script — never
+  gets these tools. Only the Web UI runs them.
+- **`--cors-origins` has to name the origin you open.** `--tools`, `--agent` and
+  `--mcp-servers-config` all pin CORS to `localhost`, so the UI at `https://ai-chat.…` is
+  refused unless that origin is spelled out. It is the same flag the API-key setup needs.
+- **One command may run 60 s and return 16 KB.** The model chooses the timeout (default
+  10 s, hard max 60) and the output cap is fixed. Long jobs do not fit: a first ComfyUI run
+  that compiles kernels will be killed, so use the `comfyui_*` MCP tools for images and
+  `nohup … &` plus a log file for anything slower.
+- **Prompt injection is the actual risk.** Any page `curl` prints, any file `read_file`
+  returns, can tell the model to run something else. Keep `write_file`/`edit_file` off
+  unless you are using them, and do not leave `--tools all` reachable by more than you.
+- **The tools inherit systemd's environment**: `ai-user`, its SSH keys, and the repo `.env`
+  with whichever secrets are on the box. `--tools-runtime docker:<image>` (needs Docker) or
+  `ssh:<target>` moves execution into a container or another host. There is no allowlist.
+- **Router mode** passes `LLAMA_EXTRA_ARGS` to every child, so the tools follow whichever
+  model is loaded; `/tools` stays empty until one loads.
 
 ## Access from the LAN
 
-Nothing binds `0.0.0.0` on purpose: there is no auth in llama-server, ComfyUI or the bot, so
+> **The default is now the front door** ([12](12-deployment-and-client.md)): Open WebUI on
+> `:3000` behind the Caddy VM, with `llama-server` and ComfyUI on loopback. This
+> section is the **legacy** direct-UI layout — useful for an admin-only box with no accounts.
+> Do not run both.
+
+Nothing else binds `0.0.0.0` on purpose: there is no auth in llama-server or ComfyUI, so
 exposing them raw means anyone on the network can drive your box — and if MCP tools or
 `--agent` are on, "use the model" becomes "run code on the machine".
 
@@ -67,10 +123,14 @@ sudo ./scripts/80-lan-access.sh --proxy 192.168.1.10
 `--proxy` is the Caddy host's IP (or a CIDR). ai-box installs no proxy and keeps no
 `Caddyfile` of its own. The script:
 
-1. sets `HOST=0.0.0.0` in `llama-server.env`/`llama-router.env` and `comfyui.env`, then
+1. checks the firewall — ufw active with `Default: deny (incoming)` — and adds rules letting
+   **only** `--proxy`'s address reach 8080/8188;
+2. sets `HOST=0.0.0.0` in `llama-server.env`/`llama-router.env` and `comfyui.env`, then
    restarts whichever llama unit is running plus ComfyUI;
-2. writes the site blocks for the Caddy box to `~/.config/ai-box/caddy-ai-box.caddy`;
-3. adds ufw rules letting **only** `--proxy`'s address reach 8080/8188.
+3. writes the site blocks for the Caddy box to `~/.config/ai-box/caddy-ai-box.caddy`.
+
+With ufw missing, inactive or default-allow it stops with both services still on `127.0.0.1`
+and exits non-zero, printing the rules to add.
 
 Then, on the Caddy box:
 
@@ -88,9 +148,10 @@ interface), `--dry-run`, `--revert`.
 
 What to know:
 
-- **The ufw rules are the security boundary.** Nothing on ai-box authenticates, so if ufw is
-  inactive the ports are open to your whole LAN; the script says so and prints the rules to
-  add. `--revert` puts the env files back on `127.0.0.1` and deletes the snippet.
+- **The ufw rules are the security boundary.** Nothing on ai-box authenticates, so the bind
+  only happens once they exist; `sudo AI_BOX_UNFIREWALLED=1` skips the gate for a box already
+  covered by firewalld, nftables or a VLAN ACL. `--revert` puts the env files back on
+  `127.0.0.1` and deletes the snippet.
 - **The bcrypt hash is generated here** from `caddy`, `htpasswd` or python-bcrypt if any is
   present. If none is, the snippet contains `__BCRYPT_HASH__` and the script tells you to run
   `caddy hash-password` on the Caddy box and paste the result over both occurrences.
@@ -99,7 +160,7 @@ What to know:
 - **Caddy adds `X-Forwarded-For` itself**, so the `/v1` API needs no extra headers.
 - **Never port-forward 8080/8188.** Only the Caddy box should reach them, and only its
   80/443 should face outward.
-- **The bot is unaffected** — it keeps talking to `127.0.0.1:8080`.
+- **Open WebUI is unaffected** — it keeps talking to `127.0.0.1:8080`.
 
 ### VPN instead of opening ports
 
@@ -185,12 +246,20 @@ cat > ~/.config/ai-box/mcp.json <<'JSON'
     "comfyui": {
       "command": "/usr/bin/python3",
       "args": ["/home/ai-user/ai-box/scripts/comfy-mcp.py"],
-      "env": { "COMFY_URL": "http://127.0.0.1:8188" }
+      "env": {
+        "COMFY_URL": "http://127.0.0.1:8188",
+        "COMFY_PUBLIC_URL": "https://comfy.example.com"
+      },
+      "timeout_ms": 900000
     }
   }
 }
 JSON
 ```
+
+`timeout_ms` is llama.cpp's cap on a single tool call (default 30 s) — too short for a ComfyUI
+job that has to load SDXL first. `COMFY_PUBLIC_URL` is the address the *link* uses while
+`COMFY_URL` stays loopback; leave it out and the link is local too.
 
 Then add one flag to `LLAMA_EXTRA_ARGS` in the env file of the unit you are **actually**
 running. The router reads `llama-router.env`; `llama-server.env` is ignored while
@@ -220,9 +289,11 @@ What is different in router mode:
 - **`/tools` is empty until a model is loaded.** The router spawns its children when it loads
   a model, and it loads on the first request. Send a chat message, then check again.
 - **The image is written by ComfyUI, not by this server.** `SaveImage` puts it in
-  `~/ai/comfyui/output/` (prefix `chat_`), and the tool returns that path plus
-  `http://127.0.0.1:8188/view?...`. Open it through the tunnel you already have
-  (`-L 8188:127.0.0.1:8188`) and the markdown line in the reply renders the picture.
+  `~/ai/comfyui/output/` (prefix `chat_`), and the tool returns that path plus a `/view?...`
+  URL. With no `COMFY_PUBLIC_URL` the URL is `http://127.0.0.1:8188/view?...` and only the
+  tunnel (`-L 8188:127.0.0.1:8188`) reaches it; set `COMFY_PUBLIC_URL` to the published name
+  and the same link works in a browser off the box. The Caddy site has `basic_auth`, so the
+  inline image renders once that browser has logged in to the ComfyUI host.
 - **Ask in plain language:** *“draw a corgi astronaut, cinematic lighting”*. SDXL takes
   15–25 s; the model sits in the tool call until then, which is expected, not a hang.
 - **Tool-call timeouts.** Some builds cap a single MCP call. SDXL and Flux-schnell finish well
@@ -237,8 +308,9 @@ What is different in router mode:
   `80-lan-access.sh`, either drop the MCP flag or keep the LLM loopback-only and proxy
   ComfyUI alone.
 
-Override the defaults with `env` entries in `mcp.json`: `COMFY_URL`, `COMFY_WORKFLOW`
-(any API-format graph), `COMFY_CHECKPOINT`, `COMFY_PREFIX`, `COMFY_TIMEOUT` (default 900 s).
+Override the defaults with `env` entries in `mcp.json`: `COMFY_URL`, `COMFY_PUBLIC_URL`,
+`COMFY_WORKFLOW` (any API-format graph), `COMFY_CHECKPOINT`, `COMFY_PREFIX`, `COMFY_TIMEOUT`
+(default 900 s — but the `timeout_ms` above is what actually stops the call).
 
 ## Model management: router mode
 
@@ -284,18 +356,10 @@ Face by `user/repo:QUANT`. The same, over the API:
 ### Model names, and what breaks
 
 With `--models-dir`, the model id **is the file name**:
-`Qwen3-Coder-30B-A3B-Instruct-Q6_K.gguf`. Requests have to carry it in the `model` field, and
-the Discord bot sends `LLM_MODEL` from `./.env`, whose default is `local`. Switching to the
-router therefore means:
-
-```
-# ./.env
-LLM_MODEL=Qwen3-Coder-30B-A3B-Instruct-Q6_K.gguf
-```
-
-```bash
-sudo systemctl restart ai-discord-bot
-```
+`Qwen3-Coder-30B-A3B-Instruct-Q6_K.gguf`. Any client has to carry it in the `model` field.
+Open WebUI discovers it from `/v1/models`, so after switching to router mode just refresh the
+connection's model list in **Admin → Settings → Connections** and pick the `.gguf` entry.
+Command-line clients (editors, scripts) need the same id instead of `local`.
 
 Friendly names come from a preset file. This also gives per-model arguments, which matters as
 soon as two models want different context sizes:
@@ -334,27 +398,16 @@ Two gotchas worth knowing:
   the chat request waits. That is not a dead connection. `--no-models-autoload` plus an
   explicit `load` is the alternative if you would rather preload.
 
-## If you want a real web app instead
+## If you want another web app
 
-The built-in UI is one conversation list on one machine, with no accounts. If you need users,
-retrieval over documents, or a prettier chat surface, these two are the usual answers; both
-talk to the same `http://127.0.0.1:8080/v1` and both support MCP.
+You already have one: **Open WebUI**, the front door ([12](12-deployment-and-client.md)) —
+accounts, per-user history, ComfyUI images, and the same `http://127.0.0.1:8080/v1` behind it.
 
-**Open WebUI** — the closest thing to a drop-in. Native MCP since v0.6.31
-(*Admin → Settings → Integrations → External Tool Servers → + Add Connection*, type
-**MCP (Streamable HTTP)**; stdio servers go through `mcpo`). Add the llama.cpp endpoint as an
-OpenAI connection: `http://127.0.0.1:8080/v1`, no key. It is a separate app with its own
-database, so it costs ~1–2 GB of RAM and a second model copy is *not* involved. Run it in
-Docker (`ghcr.io/open-webui/open-webui:main`) with `--network=host` or an
-`--add-host=host.docker.internal:host-gateway` entry, since `127.0.0.1` inside a container is
-the container. Set `WEBUI_SECRET_KEY`, or OAuth-connected tools re-authenticate on every
-restart. Reach it through one more `ssh -L 3000:127.0.0.1:8080`-style forward — do not bind
-it to the LAN without auth.
-
-**LibreChat** — heavier (MongoDB, Meilisearch, a RAG service), but it has agents, per-chat MCP
-toggles and a `librechat.yaml` that keeps model and MCP config in version control. Custom
-OpenAI-compatible endpoint plus an `mcpServers:` block. Worth it only if you want the agent
-builder; otherwise it is a lot of moving parts for one user.
+Adding a second front end is possible (any OpenAI-compatible client works) but nothing about
+the model, ports or memory changes, and two front ends mean two places to manage accounts.
+The only one worth considering is **LibreChat** if you specifically want its agent builder; it
+is a six-service stack (MongoDB, Meilisearch, a RAG service) for five users, so it is a
+project, not a setting.
 
 What none of them fix: a 30B model on a 256 GB/s memory bus. A prettier UI does not change
 tok/s, and RAG over your notes still competes for the same 48 GiB.

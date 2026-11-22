@@ -11,7 +11,7 @@ Alternatives, honestly:
 
 | Option | Verdict |
 |---|---|
-| **ComfyUI + ROCm** | Reliable, scriptable over HTTP, what the bot drives. Use this |
+| **ComfyUI + ROCm** | Reliable, scriptable over HTTP, what the front door and scripts drive. Use this |
 | stable-diffusion.cpp + Vulkan | Bypasses ROCm entirely and is easy to build, but slow on iGPUs (reported ~12 s/it) and has its own Strix Halo buffer bugs. Emergency fallback |
 | InvokeAI | Now pins `gfx1151` torch wheels; workable, historically needed `HSA_OVERRIDE_GFX_VERSION`. Second choice |
 | SD.Next | `--use-rocm` exists; little primary evidence on this chip |
@@ -89,7 +89,7 @@ Avoid Q5_K GGUF on this chip (dequant instability reported); Q8_0 and Q4_K are f
 | Flux.1-dev **fp16** + fp16 T5 | ~34 GB | Full quality, fits in a 48 GiB GTT |
 | Flux.1-dev GGUF Q8_0 + fp8 T5 | ~20 GB | Good quality, comfortable |
 | Flux.1-dev GGUF Q4_K_S | ~10–14 GB | Visibly degraded, but very fast |
-| Flux.1-schnell (4 steps) | as above | Apache-2.0, the best default for a bot |
+| Flux.1-schnell (4 steps) | as above | Apache-2.0, the best default for chat images |
 
 ## Performance you should expect
 
@@ -173,7 +173,7 @@ If you would rather click: ComfyUI-Manager adds a model catalog and download dia
 UI, and `comfy model download --url <url> --relative-path models/loras` is the official CLI for
 the same job. Neither knows about this repo's presets; that is what the script is for.
 
-## The API contract the bot uses
+## The ComfyUI HTTP contract
 
 POST the workflow in **API format** (not the UI `nodes`/`links` file), then fetch results:
 
@@ -185,11 +185,12 @@ GET  /queue             -> pending/running counts
 POST /free {"unload_models":true,"free_memory":true}
 ```
 
-`bot/workflows/sdxl.api.json` is a working API-format graph. The bot **resolves nodes by
-class type** rather than hard-coded ids: it finds the `KSampler`, follows its `positive`
-link to the text node, sets the prompt, sets `seed`/`steps`/`cfg`, and follows
+`workflows/openwebui-sdxl.api.json` is a working API-format graph. The CLI scripts
+**resolve nodes by class type** rather than hard-coded ids: they find the `KSampler`, follow
+its `positive` link to the text node, set the prompt, set `seed`/`steps`/`cfg`, and follow
 `latent_image` to set width/height. That means the graph still works if you re-export it from
-a different workflow.
+a different workflow. Open WebUI does the same job through an explicit node map, because it
+only needs to target the fields it exposes ([12](12-deployment-and-client.md#sdxl-the-default)).
 
 Two API gotchas worth knowing:
 
@@ -200,10 +201,16 @@ Two API gotchas worth knowing:
 
 ## Getting an image out of the chat window
 
-llama.cpp's Llama Chat **cannot generate images by itself**. The server has no image-generation
-tool and no image-backend flag; its built-in tools are only `read_file`, `file_glob_search`,
+**The default is Open WebUI**, which drives ComfyUI directly: the Image toggle in a
+conversation and the Images workspace both queue the workflow and render the result. That is
+what household accounts use, and it needs no tools on `llama-server` at all
+([12](12-deployment-and-client.md#4-images-through-open-webui)).
+
+The rest of this section is the **admin path** — llama.cpp's own Llama Chat, which
+**cannot generate images by itself**. The server has no image-generation tool and no
+image-backend flag; its built-in tools are only `read_file`, `file_glob_search`,
 `grep_search`, `exec_shell_command`, `write_file`, `edit_file` and `get_info`. Two ways to
-close the loop, and they are not exclusive:
+close the loop for a one-off, and they are not exclusive:
 
 **1. Give llama-server an MCP tool.** `scripts/comfy-mcp.py` is a stdio MCP server (stdlib
 only, no SDK, no venv) that exposes `generate_image`, `list_models`, `status` and
@@ -241,14 +248,14 @@ Then in the chat: *“generate an image of a corgi astronaut by running
 /home/ai-user/ai-box/scripts/97-comfy-gen.sh with your prompt”*. The model calls the tool, the
 script queues the graph on ComfyUI, and the reply carries the PNG path. Options: `-n` negative
 prompt, `-W`/`-H` (rounded to multiples of 8), `--steps`, `-c` cfg, `--seed`, `-m` checkpoint,
-`-o` output dir. It uses `COMFY_WORKFLOW` (default `bot/workflows/sdxl.api.json`) and resolves
+`-o` output dir. It uses `COMFY_WORKFLOW` (default `workflows/openwebui-sdxl.api.json`) and resolves
 nodes by class type, so a re-exported graph still works.
 
-**3. Use a front end that has an image tool.** Open WebUI's built-in *Image Generation* supports
-ComfyUI directly: admin → Settings → Images → engine `ComfyUI`, base URL `http://127.0.0.1:8188`,
+**3. Use Open WebUI** (the default, above). Its *Image Generation* supports ComfyUI
+directly: admin → Settings → Images → engine `ComfyUI`, base URL `http://127.0.0.1:8188`,
 and an **API-format** workflow (ComfyUI: gear → *Enable Dev mode Options* → *Save (API Format)*),
-with node ids mapped for prompt, steps and seed. The image lands inline in the conversation.
-`bot/workflows/sdxl.api.json` is already API format and can be imported as-is.
+with node ids mapped for prompt, model, size, steps and seed. `workflows/` already contains
+two such graphs.
 
 Either way the generation competes with the LLM for GTT: unload the model first (router UI →
 **Models** → unload, or `POST /models/unload`) if a Flux job needs the room, and keep SDXL
@@ -260,7 +267,8 @@ for when you want both.
 curl -s localhost:8188/system_stats | jq '.devices[0] | {name, vram_total, vram_free}'
 ```
 
-Then use the bot's `/image` or the ComfyUI UI once, and watch `amdgpu_top` for GTT usage.
+Then generate one image (the ComfyUI UI, or `scripts/97-comfy-gen.sh`), and watch `amdgpu_top` for
+the GTT usage.
 
 The UI is at `http://127.0.0.1:8188`. On a Server install there is no browser on the box, so
 forward the port from your laptop and open it there — same tunnel as in

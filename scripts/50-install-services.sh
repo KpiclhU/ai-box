@@ -4,8 +4,8 @@
 #   sudo ./scripts/50-install-services.sh
 #
 # Units are templates in systemd/ with __USER__, __HOME__, __AI_HOME__, __REPO__,
-# __CONFIG_DIR__, __OPENCLAW_BIN__. This script substitutes them, writes the env files
-# under ~/.config/ai-box, and enables what it can actually start.
+# __CONFIG_DIR__. This script substitutes them, writes the env files under
+# ~/.config/ai-box, and enables what it can actually start.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -101,44 +101,90 @@ else
   echo "$COMFY_ENV exists, left untouched"
 fi
 
-# ---- openclaw env -----------------------------------------------------------
-# PORT and the shared secret only. Bind mode, auth mode, provider and model live in
-# ~/.openclaw/openclaw.json, which onboarding owns — do not edit it from here.
-OPENCLAW_ENV="$CONFIG_DIR/openclaw.env"
-if [ ! -f "$OPENCLAW_ENV" ]; then
-  TOKEN="$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-  cat > "$OPENCLAW_ENV" <<EOF
-# OpenClaw gateway. Edit and: systemctl restart openclaw-gateway
-# Shared secret for the Control UI and CLI clients (gateway.auth.token):
-#   sudo grep OPENCLAW_GATEWAY_TOKEN $CONFIG_DIR/openclaw.env
-OPENCLAW_GATEWAY_TOKEN=$TOKEN
-PORT=18789
-# Keep the loopback default and reach the UI with an SSH tunnel or Tailscale Serve.
-# Bind/auth/provider/model: ~/.openclaw/openclaw.json — see docs/11-openclaw.md
+# ---- openwebui env ----------------------------------------------------------
+# The front door. It talks to llama-server and ComfyUI over loopback, so neither of
+# those needs to leave the box. WEBUI_URL is the origin the Caddy VM publishes.
+OPENWEBUI_ENV="$CONFIG_DIR/openwebui.env"
+PUBLIC_URL="${AI_BOX_PUBLIC_URL:-https://ai.pilchlab.ca}"
+
+# Open WebUI creates this account on its first start, while ENABLE_SIGNUP stays
+# false. Relying on the first sign-up page is version-dependent: older releases
+# gate it on ENABLE_SIGNUP and lock you out. WEBUI_ADMIN_* is not.
+ADMIN_EMAIL="${OPENWEBUI_ADMIN_EMAIL:-admin@ai-box.local}"
+ADMIN_NAME="${OPENWEBUI_ADMIN_NAME:-Admin}"
+ADMIN_PASSWORD="${OPENWEBUI_ADMIN_PASSWORD:-}"
+if [ -z "$ADMIN_PASSWORD" ]; then
+  ADMIN_PASSWORD="$(openssl rand -hex 12 2>/dev/null || head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+fi
+
+# The shipped SDXL graph, minified onto one line so systemd can read it back as
+# one value. Open WebUI overwrites the model node with IMAGE_GENERATION_MODEL,
+# so an empty model would send ckpt_name="" and fail the first image.
+WORKFLOW_FILE="$REPO/workflows/openwebui-sdxl.api.json"
+WORKFLOW_JSON=""
+if [ -f "$WORKFLOW_FILE" ] && command -v python3 >/dev/null 2>&1; then
+  WORKFLOW_JSON="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])), separators=(",",":")))' "$WORKFLOW_FILE" 2>/dev/null || true)"
+fi
+# No negative_prompt mapping: the inline chat path sends null for it, and ComfyUI
+# rejects null for a STRING input. The graph carries its own negative prompt.
+COMFY_NODES_JSON='[{"type":"prompt","key":"text","node_ids":["6"]},{"type":"model","key":"ckpt_name","node_ids":["4"]},{"type":"width","key":"width","node_ids":["5"]},{"type":"height","key":"height","node_ids":["5"]},{"type":"steps","key":"steps","node_ids":["3"]},{"type":"seed","key":"seed","node_ids":["3"]}]'
+
+if [ ! -f "$OPENWEBUI_ENV" ]; then
+  SECRET="$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  cat > "$OPENWEBUI_ENV" <<EOF
+# Open WebUI. Edit and: systemctl restart open-webui
+# Loopback until 81-front-door.sh has a default-deny firewall covering :3000; it
+# adds the rule first and then flips this to 0.0.0.0 for the Caddy VM. Do not set
+# 0.0.0.0 by hand: this port has no authentication gate of its own in front of it
+# other than Open WebUI's login, and nothing else on this box faces the LAN.
+HOST=127.0.0.1
+PORT=3000
+# Keep this secret. Changing it logs every user out.
+WEBUI_SECRET_KEY=$SECRET
+WEBUI_URL=$PUBLIC_URL
+# The first account. Created at startup while sign-ups stay off; the password
+# line is removed once the account exists. Change the password after signing in.
+WEBUI_ADMIN_EMAIL=$ADMIN_EMAIL
+WEBUI_ADMIN_PASSWORD=$ADMIN_PASSWORD
+WEBUI_ADMIN_NAME=$ADMIN_NAME
+# Accounts are created by the admin; nobody self-registers.
+ENABLE_SIGNUP=false
+# Per-user API keys, used by openGym and scripts through the /openai endpoint.
+ENABLE_API_KEYS=true
+ENABLE_VERSION_UPDATE_CHECK=false
+ENABLE_OLLAMA_API=false
+DATA_DIR=$AI_HOME/data/openwebui
+# Image generation: ComfyUI on this box. Workflows and node maps: docs/12.
+ENABLE_IMAGE_GENERATION=true
+IMAGE_GENERATION_ENGINE=comfyui
+COMFYUI_BASE_URL=http://127.0.0.1:8188
+IMAGE_GENERATION_MODEL=sd_xl_base_1.0.safetensors
+IMAGE_SIZE=1024x1024
+IMAGE_STEPS=28
 EOF
-  echo "wrote $OPENCLAW_ENV"
+  if [ -n "$WORKFLOW_JSON" ]; then
+    {
+      echo "# Shipped SDXL graph and node map, so the first image needs no import."
+      printf 'COMFYUI_WORKFLOW=%s\n' "$WORKFLOW_JSON"
+      printf 'COMFYUI_WORKFLOW_NODES=%s\n' "$COMFY_NODES_JSON"
+    } >> "$OPENWEBUI_ENV"
+  else
+    echo "warning: could not read $WORKFLOW_FILE — import the workflow in Admin -> Settings -> Images" >&2
+  fi
+  echo "wrote $OPENWEBUI_ENV"
 else
-  echo "$OPENCLAW_ENV exists, left untouched"
+  echo "$OPENWEBUI_ENV exists, left untouched"
 fi
 
 chown "$TARGET_USER:$TARGET_USER" "$CONFIG_DIR"/*.env
 chmod 600 "$CONFIG_DIR"/*.env
 
-# ---- openclaw binary --------------------------------------------------------
-# npm's global bin directory is not on systemd's default PATH, so the unit needs the
-# absolute path substituted. A login shell also covers nvm/volta installations.
-OPENCLAW_BIN="$(sudo -u "$TARGET_USER" bash -lc 'command -v openclaw' 2>/dev/null || true)"
-if [ -z "$OPENCLAW_BIN" ] && [ -x /usr/local/bin/openclaw ]; then
-  OPENCLAW_BIN=/usr/local/bin/openclaw
-fi
+# Chat history, users and settings live here, not in the venv.
+install -d -o "$TARGET_USER" -g "$TARGET_USER" -m 700 "$AI_HOME/data/openwebui"
 
 # ---- render units -----------------------------------------------------------
 say "Installing units into $UNIT_DIR"
-for unit in llama-server llama-router comfyui ai-discord-bot openclaw-gateway; do
-  if [ "$unit" = openclaw-gateway ] && [ -z "$OPENCLAW_BIN" ]; then
-    echo "skipped openclaw-gateway: openclaw not installed (scripts/60-install-openclaw.sh)"
-    continue
-  fi
+for unit in llama-server llama-router comfyui open-webui; do
   src="$REPO/systemd/${unit}.service"
   [ -f "$src" ] || die "missing $src"
   sed -e "s|__USER__|$TARGET_USER|g" \
@@ -146,7 +192,6 @@ for unit in llama-server llama-router comfyui ai-discord-bot openclaw-gateway; d
       -e "s|__AI_HOME__|$AI_HOME|g" \
       -e "s|__REPO__|$REPO|g" \
       -e "s|__CONFIG_DIR__|$CONFIG_DIR|g" \
-      -e "s|__OPENCLAW_BIN__|$OPENCLAW_BIN|g" \
       "$src" > "$UNIT_DIR/${unit}.service"
   echo "installed $UNIT_DIR/${unit}.service"
 done
@@ -163,39 +208,70 @@ else
   echo "skipped llama-server: no MODEL set in $LLAMA_ENV"
 fi
 
-systemctl enable comfyui.service
-systemctl restart comfyui.service || true
-echo "comfyui enabled"
-
-if [ -f "$REPO/.env" ] && ! grep -q '^DISCORD_TOKEN=YOUR_BOT_TOKEN_HERE' "$REPO/.env"; then
-  systemctl enable ai-discord-bot.service
-  systemctl restart ai-discord-bot.service || true
-  echo "ai-discord-bot enabled"
+if [ -x "$AI_HOME/comfyui/.venv/bin/python" ]; then
+  systemctl enable comfyui.service
+  systemctl restart comfyui.service || true
+  echo "comfyui enabled"
 else
-  echo "skipped ai-discord-bot: set DISCORD_TOKEN in $REPO/.env first"
+  echo "skipped comfyui: run ./scripts/30-install-comfyui.sh first"
 fi
 
-if [ -z "$OPENCLAW_BIN" ]; then
-  echo "skipped openclaw-gateway: not installed (scripts/60-install-openclaw.sh, docs/11)"
-elif [ -f "$TARGET_HOME/.openclaw/openclaw.json" ]; then
-  systemctl enable openclaw-gateway.service
-  systemctl restart openclaw-gateway.service || true
-  echo "openclaw-gateway enabled (Control UI on 127.0.0.1:18789, token in openclaw.env)"
+if [ -x "$AI_HOME/openwebui/venv/bin/open-webui" ]; then
+  systemctl enable open-webui.service
+  systemctl restart open-webui.service || true
+  echo "open-webui enabled (127.0.0.1:3000; publish with scripts/81-front-door.sh)"
+
+  if grep -q '^WEBUI_ADMIN_PASSWORD=' "$OPENWEBUI_ENV" 2>/dev/null; then
+    echo
+    echo "Open WebUI admin, created on this first start:"
+    echo "  email    $(sed -n 's/^WEBUI_ADMIN_EMAIL=//p' "$OPENWEBUI_ENV" | tail -1)"
+    echo "  password $(sed -n 's/^WEBUI_ADMIN_PASSWORD=//p' "$OPENWEBUI_ENV" | tail -1)"
+    echo "  (change it after signing in; it is only read while no user exists)"
+
+    # /api/config carries "onboarding" only while no user exists. Once that key
+    # is gone the account is there, so the bootstrap password can leave the file.
+    if command -v curl >/dev/null 2>&1; then
+      OW_PORT="$(sed -n 's/^PORT=//p' "$OPENWEBUI_ENV" | tail -1)"
+      OW_PORT="${OW_PORT:-3000}"
+      cfg=""
+      for _ in $(seq 1 30); do
+        cfg="$(curl -s --max-time 2 "http://127.0.0.1:$OW_PORT/api/config" 2>/dev/null || true)"
+        [ -n "$cfg" ] && break
+        sleep 2
+      done
+      if [ -n "$cfg" ] && ! printf '%s' "$cfg" | grep -q '"onboarding"'; then
+        sed -i '/^WEBUI_ADMIN_PASSWORD=/d' "$OPENWEBUI_ENV"
+        chown "$TARGET_USER:$TARGET_USER" "$OPENWEBUI_ENV" 2>/dev/null || true
+        chmod 600 "$OPENWEBUI_ENV" 2>/dev/null || true
+        echo "  admin account confirmed; removed the bootstrap password from openwebui.env"
+      elif [ -n "$cfg" ]; then
+        echo "  warning: the service is up but has no account yet. A cold first start"
+        echo "  can take a minute; re-run this script to look again, or check:"
+        echo "    journalctl -u open-webui -n 80 --no-pager"
+      else
+        echo "  warning: could not confirm the admin account; check:"
+        echo "    systemctl status open-webui --no-pager"
+      fi
+    fi
+  fi
 else
-  echo "skipped openclaw-gateway: installed but not onboarded — run: openclaw onboard"
+  echo "skipped open-webui: run ./scripts/45-install-openwebui.sh first"
 fi
 
 cat <<EOF
 
 Status:
-  systemctl status llama-server comfyui ai-discord-bot openclaw-gateway --no-pager
+  systemctl status llama-server comfyui open-webui --no-pager
   journalctl -u llama-server -f
 
 Endpoints:
+  http://127.0.0.1:3000               Open WebUI — chat and images (the front door)
   http://127.0.0.1:8080/health        llama.cpp
-  http://127.0.0.1:8080               llama.cpp chat UI (MCP tools), over the SSH tunnel
-  http://127.0.0.1:8188               ComfyUI
-  http://127.0.0.1:18789              OpenClaw Control UI (token in openclaw.env)
+  http://127.0.0.1:8080               llama.cpp's own chat UI, admin/debug over SSH
+  http://127.0.0.1:8188               ComfyUI, admin only over SSH (no auth of its own)
+
+Publish through the Caddy VM:
+  sudo ./scripts/81-front-door.sh --caddy-ip <caddy-ip> --hostname <name>
 
 Multi-model (every GGUF in $AI_HOME/models, one port):
   sudo systemctl disable --now llama-server

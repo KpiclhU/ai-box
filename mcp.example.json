@@ -7,7 +7,8 @@
       ],
       "env": {
         "COMFY_URL": "http://127.0.0.1:8188"
-      }
+      },
+      "timeout_ms": 900000
     },
     "filesystem": {
       "command": "/usr/bin/npx",

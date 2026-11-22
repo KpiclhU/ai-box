@@ -6,8 +6,8 @@
 # python
 __pycache__/
 *.py[cod]
-bot/.venv/
 .venv/
+openwebui/
 
 # model weights and generated data (large, re-downloadable)
 *.gguf

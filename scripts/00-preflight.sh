@@ -118,6 +118,7 @@ done
 [ -x "$AI_HOME/llama.cpp/build/bin/llama-server" ] && ok "llama-server (rocm build) present" || warn "no llama-server at $AI_HOME/llama.cpp/build/bin"
 [ -x "$AI_HOME/llama.cpp/build-vulkan/bin/llama-server" ] && ok "llama-server (vulkan build) present" || true
 [ -x "$AI_HOME/comfyui/.venv/bin/python" ] && ok "ComfyUI venv present" || warn "no ComfyUI venv at $AI_HOME/comfyui/.venv"
+[ -x "$AI_HOME/openwebui/venv/bin/open-webui" ] && ok "Open WebUI venv present" || warn "no Open WebUI venv at $AI_HOME/openwebui/venv"
 
 head_ "Models on disk"
 if [ -d "$AI_HOME/models" ]; then
@@ -131,9 +132,16 @@ else
   warn "$AI_HOME/models does not exist yet"
 fi
 [ -d "$AI_HOME/comfyui/models/checkpoints" ] && info "checkpoints: $(find "$AI_HOME/comfyui/models/checkpoints" -maxdepth 1 \( -name '*.safetensors' -o -name '*.ckpt' \) 2>/dev/null | wc -l) file(s)"
+if [ -f "$AI_HOME/comfyui/models/checkpoints/sd_xl_base_1.0.safetensors" ]; then
+  ok "SDXL checkpoint sd_xl_base_1.0.safetensors present (default image workflow)"
+else
+  warn "sd_xl_base_1.0.safetensors missing — the shipped image workflow will fail"
+  info "  gated repo: accept its licence, then run 'hf auth login' once before downloading"
+  info "  ./scripts/96-comfy-models.sh download stabilityai/stable-diffusion-xl-base-1.0 'sd_xl_base_1.0.safetensors' checkpoints"
+fi
 
 head_ "Services"
-for unit in llama-server comfyui ai-discord-bot; do
+for unit in llama-server comfyui open-webui; do
   if systemctl list-unit-files "${unit}.service" >/dev/null 2>&1 && systemctl cat "${unit}.service" >/dev/null 2>&1; then
     state=$(systemctl is-active "${unit}.service" 2>/dev/null || true)
     case "$state" in
@@ -151,7 +159,48 @@ if command -v curl >/dev/null; then
   [ "$code" = "200" ] && ok "llama-server http://127.0.0.1:8080/health -> $code" || info "llama-server health -> $code"
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:8188/system_stats || echo 000)
   [ "$code" = "200" ] && ok "ComfyUI http://127.0.0.1:8188 -> $code" || info "ComfyUI -> $code"
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:3000/ || echo 000)
+  [ "$code" = "200" ] && ok "Open WebUI http://127.0.0.1:3000 -> $code" || info "Open WebUI -> $code"
+  if [ "$code" = "200" ]; then
+    cfg=$(curl -s --max-time 3 http://127.0.0.1:3000/api/config || true)
+    case "$cfg" in
+      *'"onboarding"'*) warn "Open WebUI has no account yet — see the admin credentials from 50-install-services.sh" ;;
+      *) ok "Open WebUI has an admin account" ;;
+    esac
+  fi
 fi
+
+head_ "Listening / firewall"
+# A 0.0.0.0 listener is only acceptable behind a default-deny firewall. This is
+# the check that would have caught the front door before ufw was switched on.
+GUARDED=0
+if command -v ufw >/dev/null 2>&1; then
+  if ufw status 2>/dev/null | grep -q '^Status: active'; then
+    if ufw status verbose 2>/dev/null | grep -q '^Default: deny (incoming)'; then
+      GUARDED=1
+      ok "ufw active, incoming denied by default"
+    else
+      warn "ufw active but its default incoming policy is allow — it restricts nothing"
+    fi
+  else
+    warn "ufw installed but inactive — anything on 0.0.0.0 is reachable from the LAN"
+  fi
+else
+  warn "ufw not installed — anything on 0.0.0.0 is reachable from the LAN"
+fi
+for p in 3000 8080 8188; do
+  addr="$(ss -ltnH "sport = :$p" 2>/dev/null | awk '{print $4; exit}')"
+  case "$addr" in
+    "")        info "$p: nothing listening" ;;
+    127.0.0.1:*) info "$p: $addr (loopback)" ;;
+    \[::1\]:*)   info "$p: $addr (loopback)" ;;
+    *)         if [ "$GUARDED" -eq 1 ]; then
+                 ok "$p: $addr (all interfaces, ufw-gated)"
+               else
+                 bad "$p: $addr — reachable from the LAN with no default-deny firewall"
+               fi ;;
+  esac
+done
 
 head_ "Disk"
 df -h "$AI_HOME" 2>/dev/null | tail -1 | awk '{printf "  .....  %s avail on %s\n", $4, $6}'

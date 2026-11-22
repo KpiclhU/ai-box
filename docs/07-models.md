@@ -40,11 +40,11 @@ with Gated DeltaNet/SSM layers between. Three things follow:
 
 | Model | Size | Notes |
 |---|---|---|
-| **Qwen3-30B-A3B-Instruct-2507** | ~18 GB (Q4_K_M) | The everyday Discord model; fast, good prose |
+| **Qwen3-30B-A3B-Instruct-2507** | ~18 GB (Q4_K_M) | The everyday chat model; fast, good prose |
 | gpt-oss-20b | ~12 GB | Fits alongside other things; chatty and quick |
 | Qwen3-32B | ~20 GB | Slower, better at hard questions |
 
-Use the same weights for Discord and coding if you want one loaded model. Two separate
+Use the same weights for chat and coding if you want one loaded model. Two separate
 servers cost two times the RAM; see [04-llm-stack.md](04-llm-stack.md).
 
 ## Images
@@ -52,7 +52,7 @@ servers cost two times the RAM; see [04-llm-stack.md](04-llm-stack.md).
 | Model | Size | Use |
 |---|---|---|
 | SDXL base / Juggernaut XL / RealVisXL | 6–7 GB | Fast iteration, 15–25 s |
-| **Flux.1-schnell** (4 steps) | fp16 ~23 GB, GGUF Q8 ~13 GB | Best speed/quality for a bot |
+| **Flux.1-schnell** (4 steps) | fp16 ~23 GB, GGUF Q8 ~13 GB | Best speed/quality for chat images |
 | Flux.1-dev (20 steps) | ~34 GB peak fp16 | Best quality; tight but fits |
 | SD 1.5 | ~2 GB | Only if you need speed or old LoRAs |
 

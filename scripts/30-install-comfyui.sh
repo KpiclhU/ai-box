@@ -73,11 +73,12 @@ fi
 cat <<EOF
 
 Next:
-  1. Put a checkpoint in $COMFY/models/checkpoints
+  1. Put the checkpoint the shipped workflow expects in $COMFY/models/checkpoints
      (./scripts/96-comfy-models.sh download stabilityai/stable-diffusion-xl-base-1.0 \
-        'sd_xl_base_1.0.safetensors' checkpoints  works)
-  2. Set COMFY_WORKFLOW / COMFY_CHECKPOINT in .env
-  3. sudo ./scripts/50-install-services.sh
-  4. open http://127.0.0.1:8188 and generate once by hand — the first run compiles
+        'sd_xl_base_1.0.safetensors' checkpoints  does it)
+     That repo is gated: accept its licence on the Hugging Face page and run
+     'hf auth login' once first, or the download answers 401.
+  2. sudo ./scripts/50-install-services.sh
+  3. open http://127.0.0.1:8188 and generate once by hand — the first run compiles
      kernels and can take 10-25 minutes. Do not kill it.
 EOF

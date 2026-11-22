@@ -27,11 +27,11 @@ everything in this repo works either way. The difference is what else is on the 
 | RAM left for models | ~1.5–2 GB more | GNOME plus a browser idle at 1.5–2 GB |
 | Display | none — SSH only | console, Wayland/X11 |
 | `glxinfo` / Mesa GL stack | not installed (irrelevant here) | present |
-| llama-server / ComfyUI / bot | identical | identical |
+| llama-server / ComfyUI / Open WebUI | identical | identical |
 | Swap | **none created by default** | zram by default |
 
 **Use Server** unless this box will also be somebody's desktop. Nothing in this repo needs a
-display: `llama-server`, ComfyUI and the bot are HTTP services, and `vulkaninfo`, `rocminfo`
+display: `llama-server`, ComfyUI and Open WebUI are web services, and `vulkaninfo`, `rocminfo`
 and the `lspci`/sysfs checks all work with no session attached. What you give up is a local
 browser for the ComfyUI UI and Open WebUI — the SSH tunnel in
 [04-llm-stack.md](04-llm-stack.md) covers that, and it is what you want anyway when the box

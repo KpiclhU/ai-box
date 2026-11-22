@@ -12,12 +12,14 @@ Tools (llama.cpp prefixes them with the key from mcp.json, so `comfyui_generate_
     status           device, VRAM, queue depth
     free_memory      POST /free: drop ComfyUI's cached weights, keep the queue
 
-The graph is shaped the same way as 97-comfy-gen.sh and bot/comfy.py: nodes are found by
-class type rather than id, so a workflow re-exported from the UI keeps working.
+The graph is shaped the same way as 97-comfy-gen.sh: nodes are found by class type rather
+than id, so a workflow re-exported from the UI keeps working.
 
 Environment:
     COMFY_URL        default http://127.0.0.1:8188
-    COMFY_WORKFLOW   default <repo>/bot/workflows/sdxl.api.json
+    COMFY_PUBLIC_URL base of the link handed back to the model, e.g.
+                     https://ai-image.example.com (default: COMFY_URL)
+    COMFY_WORKFLOW   default <repo>/workflows/openwebui-sdxl.api.json
     COMFY_CHECKPOINT override the ckpt_name baked into the workflow (empty = leave it)
     COMFY_PREFIX     SaveImage filename_prefix, default "chat"
     COMFY_TIMEOUT    seconds to wait for a job, default 900
@@ -44,7 +46,10 @@ DEFAULT_PROTOCOL = "2025-06-18"
 
 REPO = Path(__file__).resolve().parent.parent
 BASE = os.environ.get("COMFY_URL", "http://127.0.0.1:8188").rstrip("/")
-WORKFLOW = Path(os.environ.get("COMFY_WORKFLOW") or REPO / "bot" / "workflows" / "sdxl.api.json")
+# The API call stays on loopback; the link the user clicks should not. When the UI is
+# published through Caddy, set COMFY_PUBLIC_URL to the name the browser opens.
+PUBLIC = (os.environ.get("COMFY_PUBLIC_URL") or BASE).rstrip("/")
+WORKFLOW = Path(os.environ.get("COMFY_WORKFLOW") or REPO / "workflows" / "openwebui-sdxl.api.json")
 COMFY_DIR = Path(os.environ.get("COMFYUI_DIR") or Path.home() / "ai" / "comfyui")
 CHECKPOINT = (os.environ.get("COMFY_CHECKPOINT") or "").strip()
 PREFIX = os.environ.get("COMFY_PREFIX") or "chat"
@@ -235,7 +240,7 @@ def tool_generate_image(args: dict) -> str:
             "type": image.get("type", "output"),
         }
     )
-    url = "%s/view?%s" % (BASE, query)
+    url = "%s/view?%s" % (PUBLIC, query)
     path = COMFY_DIR / "output" / (image.get("subfolder") or "") / image["filename"]
     size = "%sx%s" % (meta["width"] or "workflow", meta["height"] or "workflow")
 
@@ -448,7 +453,7 @@ def main() -> int:
             stream.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
         except (AttributeError, ValueError):
             pass
-    log("ready: ComfyUI at %s, workflow %s" % (BASE, WORKFLOW))
+    log("ready: ComfyUI at %s, links %s, workflow %s" % (BASE, PUBLIC, WORKFLOW))
     while True:
         line = sys.stdin.readline()
         if not line:

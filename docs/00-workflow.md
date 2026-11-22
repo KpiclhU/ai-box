@@ -2,10 +2,10 @@
 
 Every script in this repo, in the order they run, with the command that proves each one
 worked. Prose, background and the "why" live in [01](01-hardware-and-bios.md) through
-[11](11-openclaw.md); this page is the path only.
+[12](12-deployment-and-client.md); this page is the path only.
 
 Assumes the box is `ai-box`, the user `ai-user`, the repo cloned to `~/ai-box`, and
-`~/ai/models` for GGUFs. `sudo` is needed by exactly three scripts: `10`, `50`, `80`.
+`~/ai/models` for GGUFs. `sudo` is needed by exactly three scripts: `10`, `50`, `81`.
 
 | # | Step | Command | Proof it worked |
 |---|---|---|---|
@@ -16,11 +16,10 @@ Assumes the box is `ai-box`, the user `ai-user`, the repo cloned to `~/ai-box`, 
 | 4 | Models | `hf download …` | `ls -lh ~/ai/models/*.gguf` |
 | 5 | Services | `sudo ./scripts/50-install-services.sh` | `curl -s localhost:8080/health` |
 | 6 | ComfyUI | `./scripts/30-install-comfyui.sh` | `./scripts/97-comfy-gen.sh "test"` |
-| 7 | Bot | `./scripts/40-install-bot.sh` | `/chat` in Discord |
-| 8 | MCP | `mcp.json` + one flag | `curl -s localhost:8080/tools` |
-| 9 | LAN | `sudo ./scripts/80-lan-access.sh` | a browser through Caddy |
+| 7 | Open WebUI | `./scripts/45-install-openwebui.sh` | `curl -s -o /dev/null -w '%{http_code}' localhost:3000` |
+| 8 | Front door | `sudo ./scripts/81-front-door.sh` | `https://ai.pilchlab.ca` from Windows |
+| 9 | Accounts + images | admin UI | one account per person, SDXL draws |
 | 10 | Bench | `./scripts/90-bench.sh` | `bench/YYYY-MM-DD.md` |
-| 11 | OpenClaw | `./scripts/60-install-openclaw.sh` | a message in Telegram |
 
 ---
 
@@ -36,7 +35,7 @@ the toolchain, `ttm.pages_limit` for 48 GiB and the `render,video` groups:
 
 ```powershell
 # Windows, from the repo, with the live-server ISO written to the stick in Rufus ISO mode
-powershell -ExecutionPolicy Bypass -File .\scripts\windows-seed-usb.ps1 -Root F:
+powershell -ExecutionPolicy Bypass -File .\scripts\windows-seed-usb.ps1 -Root F:\
 ```
 
 Boot the stick. It installs and powers off; pull the stick and turn it on. It comes up on the
@@ -87,10 +86,10 @@ curl -s localhost:8080/health             # {"status":"ok"} once the model has l
 curl -s localhost:8080/props | jq '.default_generation_settings.n_ctx'   # 65536 (131072 / 2 slots)
 ```
 
-It writes `llama-server.env`, `llama-router.env` and `comfyui.env` **only if they do not exist**,
-so re-running it after later phases is safe. It enables llama-server (set to the first GGUF
-over 1 GB it finds, by name — check `MODEL=` in the env file), ComfyUI, and skips the bot until
-`.env` has a real token.
+It writes `llama-server.env`, `llama-router.env`, `comfyui.env` and `openwebui.env` **only if
+they do not exist**, so re-running it after later phases is safe. It enables llama-server (set
+to the first GGUF over 1 GB it finds, by name — check `MODEL=` in the env file) and ComfyUI, and
+skips Open WebUI until step 7 has built it.
 
 Headless box: open one tunnel and leave it running for the rest of the build —
 
@@ -98,9 +97,14 @@ Headless box: open one tunnel and leave it running for the rest of the build —
 ssh -N -L 8080:127.0.0.1:8080 -L 8188:127.0.0.1:8188 ai-user@ai-box
 ```
 
-`http://127.0.0.1:8080` is now a chat UI, and `http://127.0.0.1:8080/v1` is the
-OpenAI-compatible endpoint for Claude Code / opencode / Continue / Cline / Aider
-([04](04-llm-stack.md)).
+`http://127.0.0.1:8080` is llama.cpp's own chat UI (admin/debug only now), and
+`http://127.0.0.1:8080/v1` is the OpenAI-compatible endpoint for Claude Code / opencode /
+Continue / Cline / Aider ([04](04-llm-stack.md)).
+
+**Keep `--tools` off.** With Open WebUI generating images itself, llama-server has no reason to
+expose shell execution over HTTP. If you add it for a one-off, remember that it turns "use the
+model" into "run commands as `ai-user`" for anyone who reaches the port
+([10](10-webui-and-models.md#server-tools-files-shell-and-the-internet)).
 
 ## 5. ComfyUI (1–2 h, mostly downloads)
 
@@ -112,87 +116,71 @@ sudo ./scripts/50-install-services.sh     # existing env files are left alone
 ./scripts/97-comfy-gen.sh "a corgi astronaut, cinematic lighting"
 ```
 
-The PNG path it prints is the whole API: `97-comfy-gen.sh` is how the terminal, the bot and
-(the slow path) the model all generate images. Model layout and the FP8 trap:
+The PNG path it prints is the CLI path: useful for testing ComfyUI without the web UI. The
+front door draws through ComfyUI directly (§7). Model layout and the FP8 trap:
 [05](05-image-generation.md).
 
-## 6. Discord bot (30 min)
-
-1. <https://discord.com/developers/applications> → **Bot** → copy token; invite with `bot` +
-   `applications.commands`.
-2. ```bash
-   ./scripts/40-install-bot.sh        # venv + deps, creates .env from bot/.env.example
-   $EDITOR .env                       # DISCORD_TOKEN, DISCORD_GUILD_ID, COMFY_CHECKPOINT
-   sudo ./scripts/50-install-services.sh
-   journalctl -u ai-discord-bot -f
-   ```
-3. In Discord: `/chat`, `/image`, `/reset`, `/status`.
-
-Behaviour, history and limits: [06](06-discord-bot.md).
-
-## 7. MCP — let the chat model draw (10 min)
-
-Three edits and one flag. `scripts/comfy-mcp.py` is stdlib-only, so it starts in milliseconds
-and costs nothing to have configured.
+## 6. Open WebUI (15 min, mostly pip)
 
 ```bash
-chmod +x ~/ai-box/scripts/comfy-mcp.py
-mkdir -p ~/.config/ai-box
-cp ~/ai-box/mcp.example.json ~/.config/ai-box/mcp.json
+./scripts/45-install-openwebui.sh         # uv + pinned Python 3.12 + venv. No sudo.
+sudo ./scripts/50-install-services.sh     # openwebui.env + unit; prints the admin login
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/    # 200
 ```
 
-Edit `~/.config/ai-box/mcp.json`. Absolute paths only — systemd's `PATH` is `/usr/bin:/bin`, so
-a bare `npx`/`uvx` will not start. Keep `comfyui` and drop the other two unless you want them
-(`filesystem` needs nodejs/npm, `git` needs `uv`):
+Why native and not the container: this box has no Docker, and the install is a venv plus one
+unit. `DATA_DIR` is `~/ai/data/openwebui`, so chats and users are outside the venv and survive
+an upgrade.
 
-```json
-{
-  "mcpServers": {
-    "comfyui": {
-      "command": "/usr/bin/python3",
-      "args": ["/home/ai-user/ai-box/scripts/comfy-mcp.py"],
-      "env": { "COMFY_URL": "http://127.0.0.1:8188" }
-    }
-  }
-}
-```
-
-Then add the flag to **the env file of the unit that actually owns port 8080**. `llama-router.env`
-is the one that matters in router mode; `llama-server.env` is ignored while the router runs. It
-must be a single line — the unit splits it on whitespace, so no backslashes:
-
-```
-# ~/.config/ai-box/llama-router.env
-LLAMA_EXTRA_ARGS="--ctx-size 131072 --cache-type-k q8_0 --cache-type-v q8_0 --n-gpu-layers 999 --flash-attn on --jinja --parallel 2 --mcp-servers-config /home/ai-user/.config/ai-box/mcp.json"
-```
+## 7. Front door — Caddy on the Proxmox VM (20 min)
 
 ```bash
-sudo systemctl restart llama-router        # or llama-server, whichever you run
-curl -s localhost:8080/tools | jq          # comfyui_generate_image, _list_models, _status, _free_memory
-journalctl -u llama-router -n 40 --no-pager | grep -i mcp
+sudo ./scripts/81-front-door.sh --caddy-ip 192.168.150.13 --hostname ai.pilchlab.ca
 ```
 
-`/tools` is empty until a model is loaded — in router mode the children start with the model,
-so send a chat message first. Then ask it plainly: *"draw a corgi astronaut"*. The tool returns
-the file path plus a `/view` URL on port 8188, which renders through the tunnel above.
-
-Two things to keep in mind: **`HOST=127.0.0.1`** (tools on a LAN address is remote code
-execution by design), and **prompt cost** — every tool schema is tokens on every request, so
-three servers is pleasant and fifteen is not. Details: [10](10-webui-and-models.md#connectors-mcp-tools).
-
-## 8. LAN through Caddy (optional, last)
-
-The box itself runs no proxy. The script binds the UIs to the LAN, firewalls everything except
-the Caddy host, and writes the site block to import there:
+It enforces `HOST=127.0.0.1` on llama-server and ComfyUI, opens `:3000` to the Caddy VM only, and
+only then moves Open WebUI to `HOST=0.0.0.0` (the proxy is on another machine). With ufw missing,
+inactive or default-allow it **refuses**: the bind stays on loopback and the script exits non-zero
+with the four commands that fix it. It also sets `WEBUI_URL` and writes
+`~/.config/ai-box/caddy-ai-box.caddy`. On the VM:
 
 ```bash
-sudo ./scripts/80-lan-access.sh --proxy 192.168.150.5
-# then, on the Caddy box:  import /etc/caddy/caddy-ai-box.caddy
+scp ai-user@192.168.150.40:~/.config/ai-box/caddy-ai-box.caddy /tmp/
+sudo mv /tmp/caddy-ai-box.caddy /etc/caddy/caddy-ai-box.caddy
+# add one line to /etc/caddy/Caddyfile:   import /etc/caddy/caddy-ai-box.caddy
+sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy
 ```
 
-**Decide one thing first:** if you enable MCP tools, keep the LLM loopback-only and proxy
-ComfyUI alone — or drop the `--mcp-servers-config` flag. Authentication happens on the Caddy
-box, not here. [10](10-webui-and-models.md#access-from-the-lan).
+Trust the site's certificate on each Windows PC (Caddy's local CA, because the VM is on a
+private address):
+
+```bash
+sudo cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt > root.crt   # on the VM
+certutil -addstore -f Root root.crt                                                    # Windows, as admin
+```
+
+Then, on the box:
+
+```bash
+ss -ltnp | grep -E ':(3000|8080|8188)\b'   # 8080/8188 on 127.0.0.1; 3000 on 0.0.0.0
+ufw status verbose                         # Status: active; Default: deny (incoming)
+```
+
+## 8. First sign-in: accounts and images (15 min)
+
+1. `https://ai.pilchlab.ca` → sign in with the admin email and password printed by
+   `50-install-services.sh` (the account is created at startup, sign-ups stay off).
+2. **Admin → Settings → Users**: create one account per person (up to five).
+3. **Settings → Images** is already set to ComfyUI, the SDXL graph and
+   `sd_xl_base_1.0.safetensors`; the checkpoint must exist on disk. Node map:
+   [12](12-deployment-and-client.md#sdxl-the-default).
+4. **Settings → Connections**: OpenAI-compatible, `http://127.0.0.1:8080/v1`, any placeholder
+   key (llama-server does not check one on loopback).
+5. Optional: import `workflows/openwebui-flux-schnell.api.json` when you want Flux instead;
+   set Steps to 4 with it.
+
+Prove it: ask a question (the reply streams), then use the **Image** toggle in the message bar
+and confirm the picture appears inline and in the *Images* sidebar.
 
 ## 9. Measure (10 min)
 
@@ -202,37 +190,6 @@ sudo systemctl stop llama-server          # it already holds the model in GTT
 ```
 
 Results append to `bench/YYYY-MM-DD.md`. Then `sudo systemctl start llama-server`.
-
-## 10. OpenClaw — chat from anywhere (20 min, optional)
-
-On the box you already have; this adds a gateway, not a model.
-
-```bash
-./scripts/60-install-openclaw.sh          # npm install + provider patch. No sudo.
-openclaw onboard                          # "Existing llama-server" -> http://127.0.0.1:8080/v1
-openclaw config patch --file ~/.config/ai-box/openclaw-provider.patch.json5
-openclaw models set llama-cpp/local       # `local` is --alias in llama-server.env
-openclaw channels add --channel telegram  # long polling: no ports, no DNS
-sudo ./scripts/50-install-services.sh     # openclaw-gateway.service
-journalctl -u openclaw-gateway -f
-```
-
-Model id check before onboarding — `/v1/models` answers with the alias:
-
-```bash
-curl -s localhost:8080/v1/models | jq -r '.data[].id'
-curl -s localhost:8080/health                 # must be {"status":"ok"}, not 503
-```
-
-Two things the wizard will not infer for you: **`contextWindow: 65536`** (each request gets
-64k here, not the 128k OpenClaw assumes) and a **300 s provider timeout** for local prefill.
-Both are in the patch file printed above. Do not choose "Managed local server" in onboarding,
-and do not run `--install-daemon` — the repo's unit replaces it.
-
-Reaching the Control UI: `ssh -N -L 18789:127.0.0.1:18789 ai-user@ai-box`, then
-`http://127.0.0.1:18789` with the token from `~/.config/ai-box/openclaw.env`. The chat channel
-is the point, though — it needs no tunnel at all. Security model before you connect one:
-[11](11-openclaw.md#security-this-is-an-agent-not-a-chat-ui).
 
 ---
 
@@ -247,7 +204,9 @@ curl -s localhost:8080/models | jq
 ```
 
 `MODELS_MAX=1` in `llama-router.env` is correct for 48 GiB — two 24 GB models do not fit at
-once. Model names are the `.gguf` file names. [10](10-webui-and-models.md#model-management-router-mode).
+once. Model names are the `.gguf` file names, and Open WebUI's connection keeps working because
+the port and the `/v1` path are the same.
+[10](10-webui-and-models.md#model-management-router-mode).
 
 ## Checklist
 
@@ -258,16 +217,18 @@ once. Model names are the `.gguf` file names. [10](10-webui-and-models.md#model-
 - [ ] `curl localhost:8080/health` is `ok`, `/props` n_ctx is 65536
 - [ ] Your editor's model list shows `local` at `http://127.0.0.1:8080/v1`
 - [ ] `97-comfy-gen.sh "test"` writes a PNG
-- [ ] Bot is online, `/chat` streams, `/image` returns a file
-- [ ] `curl localhost:8080/tools` lists `comfyui_generate_image`
-- [ ] `80-lan-access.sh` only if you want off-box access, and only with loopback LLM
+- [ ] `http://127.0.0.1:3000/` answers 200 and `open-webui` is active
+- [ ] `https://ai.pilchlab.ca` loads from Windows with no certificate warning
+- [ ] First account is admin; sign-ups are off; everyone else has an account
+- [ ] Chat streams in Open WebUI; the Image toggle returns a picture inline
+- [ ] `ufw status verbose` is active with default deny; `ss -ltnp` shows 8080/8188 on 127.0.0.1
+      and 3000 on 0.0.0.0
 - [ ] `90-bench.sh` numbers recorded in `bench/`
-- [ ] `openclaw models list --provider llama-cpp` shows the model (after onboarding)
-- [ ] A message in the chosen chat channel gets an answer
 
 ## When a step fails
 
 `00-preflight.sh` first, then [09](09-troubleshooting.md) — symptom → cause → fix, including
 `HIP error: invalid device function` (wrong torch wheel index), a `netplan` crash during install,
-model load failures from `--ctx-size`, and ComfyUI holding GTT the LLM needs
-(`96-comfy-models.sh free`).
+model load failures from `--ctx-size`, ComfyUI holding GTT the LLM needs
+(`96-comfy-models.sh free`), a 502 from Caddy, and the certificate warning that means the root
+CA was never trusted.

@@ -6,10 +6,10 @@ An install plan and working automation for turning a Framework Desktop (Ryzen AI
 - **Coding assistance** — a local model served over an OpenAI-compatible API, usable from
   Claude Code / opencode / Continue / Cline / Aider / Open WebUI.
 - **Image generation** — ComfyUI on the same iGPU, driven headlessly over HTTP.
-- **Discord chat** — a bot that streams LLM replies into your channels and generates images
-  on command.
-- **Chat from anywhere** — an OpenClaw gateway that puts the same local model in Telegram,
-  Slack, WhatsApp or Matrix, so the agent is reachable from a phone without exposing a port.
+- **Chat and images for a household** — **Open WebUI** as the one front door: per-person
+  accounts, chat against the local model, and ComfyUI images inline or in their own workspace.
+- **One published surface** — a Caddy on a Proxmox VM serves `https://ai.pilchlab.ca`; the
+  model and ComfyUI stay on loopback.
 
 Everything here is designed for **one 64 GB machine with no discrete GPU**. That constraint
 drives almost every decision below.
@@ -51,8 +51,8 @@ It does **not** fit `gpt-oss-120b` (~59 GB of weights). Don't plan around it.
 | iGPU memory | **512 MB BIOS carve-out + `ttm.pages_limit` ≈ 48 GiB** | AMD's own guidance: a static carve-out buys nothing on Strix Halo and permanently removes RAM from the OS. Large carve-outs also break USB ports after suspend on this board |
 | LLM runtime | **llama.cpp `llama-server` (HIP/ROCm build)** | Best prompt-processing speed for agentic coding; one toolchain shared with ComfyUI. Vulkan build documented as the alternative for higher decode tok/s |
 | Image stack | **ComfyUI in a venv**, PyTorch ROCm wheels | Most reliable path on `gfx1151`; scriptable over HTTP for the bot |
-| Discord bot | **discord.py 2.7.1**, single async process | Slash commands + streaming edits; talks to llama-server and ComfyUI over loopback |
-| Chat gateway | **OpenClaw**, Node, loopback on `:18789` | Chat-app access from anywhere with no inbound port; speaks to the existing `:8080/v1` model and never loads a second GGUF |
+| Chat + images UI | **Open WebUI**, native `uv` install on `:3000`, reachable only from the Caddy VM | Per-user accounts and history, ComfyUI generation in chat and in an Images workspace, one process, no GPU |
+| Published surface | **Caddy** on a Proxmox VM (`192.168.150.13`), `https://ai.pilchlab.ca` | TLS, a LAN allowlist and one site block; everything else stays on loopback |
 | Orchestration | systemd user-agnostic system units | Starts on boot, restarts on failure, no Docker-in-a-VM problems |
 
 Explicitly **not** used: Ollama/LM Studio as the primary runtime (fine for experiments, less
@@ -152,38 +152,29 @@ Expect **~15–25 s per 1024² SDXL image**, ~15–30 s for Flux.1-schnell, 70�
 Flux.1-dev. First generation is slow (kernel/MIOpen compilation) — wait it out, do not kill
 it. Details, model layout and the FP8 trap: [docs/05-image-generation.md](docs/05-image-generation.md)
 
-### Phase 5 — Discord bot (30 min)
-
-1. Create an application at <https://discord.com/developers/applications>, add a **Bot**,
-   copy the token, invite it with the `bot` + `applications.commands` scopes.
-2. `cp bot/.env.example .env`, set `DISCORD_TOKEN` and `DISCORD_GUILD_ID`.
-3. ```bash
-   ./scripts/40-install-bot.sh
-   sudo ./scripts/50-install-services.sh      # ai-discord-bot.service
-   ```
-4. In Discord: `/chat`, `/image`, `/reset`, `/status`.
-
-Commands, streaming behaviour, history and rate-limit handling:
-[docs/06-discord-bot.md](docs/06-discord-bot.md)
-
-### Phase 6 — OpenClaw, chat from anywhere (20 min, optional)
-
-The model is already served on `127.0.0.1:8080/v1`, so this phase adds a gateway process
-only — no second model, no GPU work.
+### Phase 5 — Open WebUI and the front door (30 min)
 
 ```bash
-./scripts/60-install-openclaw.sh          # installs the CLI, writes the provider patch
-openclaw onboard                          # "Existing llama-server" -> http://127.0.0.1:8080/v1
-openclaw config patch --file ~/.config/ai-box/openclaw-provider.patch.json5
-openclaw channels add --channel telegram
-sudo ./scripts/50-install-services.sh     # openclaw-gateway.service
+./scripts/45-install-openwebui.sh         # native install: uv + pinned Python, no sudo
+sudo ./scripts/50-install-services.sh     # openwebui.env + open-webui.service
+sudo ./scripts/81-front-door.sh --caddy-ip 192.168.150.13 --hostname ai.pilchlab.ca
 ```
 
-The two settings the wizard cannot infer are `contextWindow: 65536` (this box gives each
-request 64k, not the 128k OpenClaw assumes) and a 300 s provider timeout for locally slow
-prefill. Skip `--install-daemon` — the repo's unit is the service — and do not point a second
-gateway at the existing Discord bot token. Details, remote access and the security model:
-[docs/11-openclaw.md](docs/11-openclaw.md)
+`50` prints the admin email and a generated password; Open WebUI creates that account on its
+first start while sign-ups stay off. The last script keeps `llama-server` and ComfyUI on
+loopback, opens `:3000` to the Caddy VM only, and writes the site block to
+`~/.config/ai-box/caddy-ai-box.caddy`. Import it on the VM, then trust Caddy's local CA on the
+Windows PCs — both steps are printed by the script.
+
+Sign in with those credentials, change the password, create one account per person. Images are
+preconfigured (ComfyUI plus the SDXL graph), so the first picture only needs the checkpoint on
+disk. Full walkthrough, node map and the Flux variant:
+[docs/12-deployment-and-client.md](docs/12-deployment-and-client.md)
+
+### Phase 6 — Windows (10 min per PC)
+
+Open `https://ai.pilchlab.ca`, sign in, then **Edge → Apps → Install this site as an app**. It
+becomes a normal window with a taskbar icon. Nothing else to install.
 
 ### Phase 7 — Operations (ongoing)
 
@@ -226,12 +217,11 @@ docs/                         the deep-dive pages, in reading order
   03-gpu-memory.md            carve-out vs GTT/TTM, the 64 GB budget
   04-llm-stack.md             llama.cpp build, server flags, coding-tool wiring
   05-image-generation.md      ComfyUI, ROCm wheels, models, FP8 trap
-  06-discord-bot.md           the bot: commands, streaming, limits, ToS
   07-models.md                what fits in 64 GB, with sizes
   08-operations.md            services, updates, backups, coexistence
   09-troubleshooting.md       symptom → cause → fix
   10-webui-and-models.md      built-in chat UI, MCP connectors, router mode
-  11-openclaw.md              chat-app gateway (OpenClaw), remote access, its security model
+  12-deployment-and-client.md the front door: Open WebUI, Caddy on a Proxmox VM, Windows access
 autoinstall/
   user-data                   Ubuntu Server autoinstall answer file (unattended install)
   meta-data                   cloud-init meta-data for the CIDATA seed volume
@@ -240,10 +230,10 @@ scripts/
   10-gpu-memory.sh            sets ttm.pages_limit via GRUB
   20-install-llama.sh         builds llama.cpp for HIP or Vulkan
   30-install-comfyui.sh       venv + ROCm torch + ComfyUI
-  40-install-bot.sh           venv + bot deps
-  50-install-services.sh      renders + installs systemd units (incl. openclaw-gateway)
-  60-install-openclaw.sh      OpenClaw CLI + the provider patch for :8080/v1
-  80-lan-access.sh            serves both UIs to a Caddy running on another box
+  45-install-openwebui.sh     native Open WebUI install (uv, pinned Python, no sudo)
+  50-install-services.sh      renders + installs systemd units (incl. open-webui)
+  80-lan-access.sh            legacy: raw UIs behind a Caddy, with no accounts
+  81-front-door.sh            publishes Open WebUI through the Caddy VM, loopback for the rest
   90-bench.sh                 llama-bench, both backends if present
   96-comfy-models.sh          list/download/delete ComfyUI models, free its GTT
   97-comfy-gen.sh             one image through ComfyUI — also Llama Chat's "draw" tool
@@ -253,52 +243,52 @@ systemd/
   llama-server.service        :8080, one model
   llama-router.service        :8080, every GGUF in ~/ai/models (alternatives to each other)
   comfyui.service             :8188
-  ai-discord-bot.service      the bot
-  openclaw-gateway.service    :18789 chat gateway (rendered once openclaw is installed)
-bot/                          discord.py bot (bot.py, llm.py, comfy.py, store.py)
-  workflows/sdxl.api.json     API-format ComfyUI graph with a valid default checkpoint
+  open-webui.service          :3000 the front door (chat + images)
+workflows/
+  openwebui-sdxl.api.json     API-format graph, node ids matched to Open WebUI
+  openwebui-flux-schnell.api.json   4-step Flux alternative
 ```
 
 ## 6. Quick reference
 
 | Thing | Value |
 |---|---|
-| llama-server | `http://127.0.0.1:8080` — also the built-in chat UI, with MCP tools |
-| llama-server API | `/v1/chat/completions`, `/health`, `/props`, `/tools` |
-| ComfyUI | `http://127.0.0.1:8188` — `/prompt`, `/history/<id>`, `/view` |
-| OpenClaw gateway | `http://127.0.0.1:18789` — Control UI; token in `~/.config/ai-box/openclaw.env` |
-| OpenClaw model | provider `llama-cpp`, model id `local` (the `.gguf` name in router mode) |
-| ComfyUI over MCP | `mcp.example.json` → `~/.config/ai-box/mcp.json`, then `--mcp-servers-config` in `LLAMA_EXTRA_ARGS` |
-| SSH tunnel (headless box) | `ssh -N -L 8080:127.0.0.1:8080 -L 8188:127.0.0.1:8188 -L 18789:127.0.0.1:18789 ai@ai-box` |
-| Through your Caddy | `sudo ./scripts/80-lan-access.sh --proxy 192.168.1.10` → `~/.config/ai-box/caddy-ai-box.caddy` |
+| Open WebUI | `:3000` — the front door (loopback, plus the Caddy VM only); `https://ai.pilchlab.ca` through Caddy |
+| llama-server API | `http://127.0.0.1:8080/v1` — `/v1/chat/completions`, `/health`, `/props` |
+| llama-server UI | `http://127.0.0.1:8080` — admin/debug over SSH only |
+| ComfyUI | `http://127.0.0.1:8188` — `/prompt`, `/history/<id>`, `/view`; admin over SSH only |
+| SSH tunnel (headless box) | `ssh -N -L 8080:127.0.0.1:8080 -L 8188:127.0.0.1:8188 ai@ai-box` |
+| Front door | `sudo ./scripts/81-front-door.sh --caddy-ip 192.168.150.13 --hostname ai.pilchlab.ca` |
 | State directory | `~/.config/ai-box/` (env files), `~/ai/` (binaries, models, venvs) |
-| Bot data | `~/ai/data/bot.sqlite3` |
+| Open WebUI data | `~/ai/data/openwebui` (users, chats, uploads) |
 | RAM budget | ~12–14 GB OS + ~48 GiB GPU-addressable |
 
 ## 7. Honest status of this repo
 
-- The **scripts and bot are written, syntax-checked and exercised offline**: shell scripts
-  pass `bash -n`, the bot passes `py_compile` and an import-and-assert run against the real
-  `discord.py`, and the GRUB editor was tested for idempotency, replacement, removal and
-  dry-run safety on a copy of a grub config.
-- **Not** executed against real `gfx1151` hardware, a loaded model, a ComfyUI instance or a
-  live Discord token. Treat the first run of each script as a supervised run.
-- The **OpenClaw integration is glue and documentation**: `60-install-openclaw.sh` passes
-  `bash -n`, the provider patch is plain JSON5 and the unit is the same template as the other
-  three, but none of it has been run — OpenClaw's CLI flags and provider keys come from its
-  docs as of November 2026 ([docs/11](docs/11-openclaw.md#honest-status)).
+- The **scripts are written and syntax-checked offline**: every shell script passes `bash -n`,
+  the two workflow files are valid API-format JSON, and the GRUB editor was tested for
+  idempotency, replacement, removal and dry-run safety on a copy of a grub config.
+- **Not** executed against real `gfx1151` hardware, a loaded model, a ComfyUI instance, a
+  live Caddy VM or a signed-in Open WebUI. Treat the first run of each script as a supervised run.
+- The **Open WebUI front door is new and unrun on the box**: the install script, the unit and
+  the Caddy snippet all pass their local checks, but the `uv` install, the admin settings and
+  the certificate trust step have not been executed against `gfx1151` hardware or a live Caddy
+  VM. Treat [docs/12](docs/12-deployment-and-client.md) as the supervised path.
+- The first admin is created from `WEBUI_ADMIN_*` in `openwebui.env`, not the sign-up page,
+  because the first-sign-up exemption for `ENABLE_SIGNUP=false` only landed recently.
 - The **version numbers and model figures come from published docs and benchmarks** as of
   November 2026; `gfx1151` support is moving fast, so re-check
   [AMD's Strix Halo page](https://rocm.docs.amd.com/en/latest/how-to/system-optimization/strixhalo.html)
   before assuming a pin is still current.
-- The SDXL workflow in `bot/workflows/sdxl.api.json` requires a checkpoint named in
-  `.env` (`COMFY_CHECKPOINT`); the bot substitutes it at request time.
+- The SDXL workflow in `workflows/openwebui-sdxl.api.json` names
+  `sd_xl_base_1.0.safetensors`; the checkpoint must exist under that name in ComfyUI's
+  `checkpoints/` folder, or the Model field has to be changed with it.
 
 ## Next steps if you want to go further
 
 - A preset file plus router mode (see [docs/10](docs/10-webui-and-models.md)) if you want
   several models behind one port without a third-party switcher.
 - A second 2 TB drive in the rear socket for a model library (both slots are Gen4 x4).
-- A hosted fallback model behind OpenClaw, for the turns a 30B local model gets wrong —
-  [docs/11](docs/11-openclaw.md).
-- Whisper or a TTS model on the NPU/GPU for voice in Discord — not wired up here.
+- A hosted fallback model for the turns a 30B local model gets wrong, behind a second
+  Open WebUI connection.
+- Whisper or a TTS model on the NPU/GPU for voice in Open WebUI — not wired up here.
