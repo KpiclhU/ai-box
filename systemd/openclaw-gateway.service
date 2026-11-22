@@ -1,0 +1,29 @@
+[Unit]
+Description=OpenClaw gateway (chat channels for the ai-box model)
+Documentation=https://docs.openclaw.ai/gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__HOME__
+Environment=HOME=__HOME__
+# systemd's default PATH is /usr/bin:/bin, which does not include npm's global bin
+# directory — the exact reason the MCP children in docs/10 need absolute paths.
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:__HOME__/.local/bin
+# PORT and OPENCLAW_GATEWAY_TOKEN live here so they can be rotated without editing
+# ~/.openclaw/openclaw.json by hand.
+EnvironmentFile=-__CONFIG_DIR__/openclaw.env
+# Bind mode, auth mode, provider and model are config, not flags. See docs/11.
+ExecStart=__OPENCLAW_BIN__ gateway --port ${PORT}
+# A channel token can be revoked and a message channel can have an outage.
+Restart=always
+RestartSec=5
+# Cheap next to llama-server, which already holds the 25 GB model in GTT.
+OOMScoreAdjust=-100
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

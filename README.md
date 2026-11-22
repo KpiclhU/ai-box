@@ -8,6 +8,8 @@ An install plan and working automation for turning a Framework Desktop (Ryzen AI
 - **Image generation** — ComfyUI on the same iGPU, driven headlessly over HTTP.
 - **Discord chat** — a bot that streams LLM replies into your channels and generates images
   on command.
+- **Chat from anywhere** — an OpenClaw gateway that puts the same local model in Telegram,
+  Slack, WhatsApp or Matrix, so the agent is reachable from a phone without exposing a port.
 
 Everything here is designed for **one 64 GB machine with no discrete GPU**. That constraint
 drives almost every decision below.
@@ -50,6 +52,7 @@ It does **not** fit `gpt-oss-120b` (~59 GB of weights). Don't plan around it.
 | LLM runtime | **llama.cpp `llama-server` (HIP/ROCm build)** | Best prompt-processing speed for agentic coding; one toolchain shared with ComfyUI. Vulkan build documented as the alternative for higher decode tok/s |
 | Image stack | **ComfyUI in a venv**, PyTorch ROCm wheels | Most reliable path on `gfx1151`; scriptable over HTTP for the bot |
 | Discord bot | **discord.py 2.7.1**, single async process | Slash commands + streaming edits; talks to llama-server and ComfyUI over loopback |
+| Chat gateway | **OpenClaw**, Node, loopback on `:18789` | Chat-app access from anywhere with no inbound port; speaks to the existing `:8080/v1` model and never loads a second GGUF |
 | Orchestration | systemd user-agnostic system units | Starts on boot, restarts on failure, no Docker-in-a-VM problems |
 
 Explicitly **not** used: Ollama/LM Studio as the primary runtime (fine for experiments, less
@@ -163,7 +166,26 @@ it. Details, model layout and the FP8 trap: [docs/05-image-generation.md](docs/0
 Commands, streaming behaviour, history and rate-limit handling:
 [docs/06-discord-bot.md](docs/06-discord-bot.md)
 
-### Phase 6 — Operations (ongoing)
+### Phase 6 — OpenClaw, chat from anywhere (20 min, optional)
+
+The model is already served on `127.0.0.1:8080/v1`, so this phase adds a gateway process
+only — no second model, no GPU work.
+
+```bash
+./scripts/60-install-openclaw.sh          # installs the CLI, writes the provider patch
+openclaw onboard                          # "Existing llama-server" -> http://127.0.0.1:8080/v1
+openclaw config patch --file ~/.config/ai-box/openclaw-provider.patch.json5
+openclaw channels add --channel telegram
+sudo ./scripts/50-install-services.sh     # openclaw-gateway.service
+```
+
+The two settings the wizard cannot infer are `contextWindow: 65536` (this box gives each
+request 64k, not the 128k OpenClaw assumes) and a 300 s provider timeout for locally slow
+prefill. Skip `--install-daemon` — the repo's unit is the service — and do not point a second
+gateway at the existing Discord bot token. Details, remote access and the security model:
+[docs/11-openclaw.md](docs/11-openclaw.md)
+
+### Phase 7 — Operations (ongoing)
 
 [docs/08-operations.md](docs/08-operations.md) covers systemd control, logs, updating ROCm
 and ComfyUI, backup of models/history, and the memory-budget rules for running the LLM and
@@ -209,6 +231,7 @@ docs/                         the deep-dive pages, in reading order
   08-operations.md            services, updates, backups, coexistence
   09-troubleshooting.md       symptom → cause → fix
   10-webui-and-models.md      built-in chat UI, MCP connectors, router mode
+  11-openclaw.md              chat-app gateway (OpenClaw), remote access, its security model
 autoinstall/
   user-data                   Ubuntu Server autoinstall answer file (unattended install)
   meta-data                   cloud-init meta-data for the CIDATA seed volume
@@ -218,7 +241,8 @@ scripts/
   20-install-llama.sh         builds llama.cpp for HIP or Vulkan
   30-install-comfyui.sh       venv + ROCm torch + ComfyUI
   40-install-bot.sh           venv + bot deps
-  50-install-services.sh      renders + installs systemd units
+  50-install-services.sh      renders + installs systemd units (incl. openclaw-gateway)
+  60-install-openclaw.sh      OpenClaw CLI + the provider patch for :8080/v1
   80-lan-access.sh            serves both UIs to a Caddy running on another box
   90-bench.sh                 llama-bench, both backends if present
   96-comfy-models.sh          list/download/delete ComfyUI models, free its GTT
@@ -230,6 +254,7 @@ systemd/
   llama-router.service        :8080, every GGUF in ~/ai/models (alternatives to each other)
   comfyui.service             :8188
   ai-discord-bot.service      the bot
+  openclaw-gateway.service    :18789 chat gateway (rendered once openclaw is installed)
 bot/                          discord.py bot (bot.py, llm.py, comfy.py, store.py)
   workflows/sdxl.api.json     API-format ComfyUI graph with a valid default checkpoint
 ```
@@ -241,8 +266,10 @@ bot/                          discord.py bot (bot.py, llm.py, comfy.py, store.py
 | llama-server | `http://127.0.0.1:8080` — also the built-in chat UI, with MCP tools |
 | llama-server API | `/v1/chat/completions`, `/health`, `/props`, `/tools` |
 | ComfyUI | `http://127.0.0.1:8188` — `/prompt`, `/history/<id>`, `/view` |
+| OpenClaw gateway | `http://127.0.0.1:18789` — Control UI; token in `~/.config/ai-box/openclaw.env` |
+| OpenClaw model | provider `llama-cpp`, model id `local` (the `.gguf` name in router mode) |
 | ComfyUI over MCP | `mcp.example.json` → `~/.config/ai-box/mcp.json`, then `--mcp-servers-config` in `LLAMA_EXTRA_ARGS` |
-| SSH tunnel (headless box) | `ssh -N -L 8080:127.0.0.1:8080 -L 8188:127.0.0.1:8188 ai@ai-box` |
+| SSH tunnel (headless box) | `ssh -N -L 8080:127.0.0.1:8080 -L 8188:127.0.0.1:8188 -L 18789:127.0.0.1:18789 ai@ai-box` |
 | Through your Caddy | `sudo ./scripts/80-lan-access.sh --proxy 192.168.1.10` → `~/.config/ai-box/caddy-ai-box.caddy` |
 | State directory | `~/.config/ai-box/` (env files), `~/ai/` (binaries, models, venvs) |
 | Bot data | `~/ai/data/bot.sqlite3` |
@@ -256,6 +283,10 @@ bot/                          discord.py bot (bot.py, llm.py, comfy.py, store.py
   dry-run safety on a copy of a grub config.
 - **Not** executed against real `gfx1151` hardware, a loaded model, a ComfyUI instance or a
   live Discord token. Treat the first run of each script as a supervised run.
+- The **OpenClaw integration is glue and documentation**: `60-install-openclaw.sh` passes
+  `bash -n`, the provider patch is plain JSON5 and the unit is the same template as the other
+  three, but none of it has been run — OpenClaw's CLI flags and provider keys come from its
+  docs as of November 2026 ([docs/11](docs/11-openclaw.md#honest-status)).
 - The **version numbers and model figures come from published docs and benchmarks** as of
   November 2026; `gfx1151` support is moving fast, so re-check
   [AMD's Strix Halo page](https://rocm.docs.amd.com/en/latest/how-to/system-optimization/strixhalo.html)
@@ -268,4 +299,6 @@ bot/                          discord.py bot (bot.py, llm.py, comfy.py, store.py
 - A preset file plus router mode (see [docs/10](docs/10-webui-and-models.md)) if you want
   several models behind one port without a third-party switcher.
 - A second 2 TB drive in the rear socket for a model library (both slots are Gen4 x4).
+- A hosted fallback model behind OpenClaw, for the turns a 30B local model gets wrong —
+  [docs/11](docs/11-openclaw.md).
 - Whisper or a TTS model on the NPU/GPU for voice in Discord — not wired up here.

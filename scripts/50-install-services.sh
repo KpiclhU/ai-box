@@ -4,8 +4,8 @@
 #   sudo ./scripts/50-install-services.sh
 #
 # Units are templates in systemd/ with __USER__, __HOME__, __AI_HOME__, __REPO__,
-# __CONFIG_DIR__. This script substitutes them, writes the env files under
-# ~/.config/ai-box, and enables what it can actually start.
+# __CONFIG_DIR__, __OPENCLAW_BIN__. This script substitutes them, writes the env files
+# under ~/.config/ai-box, and enables what it can actually start.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -101,12 +101,44 @@ else
   echo "$COMFY_ENV exists, left untouched"
 fi
 
+# ---- openclaw env -----------------------------------------------------------
+# PORT and the shared secret only. Bind mode, auth mode, provider and model live in
+# ~/.openclaw/openclaw.json, which onboarding owns — do not edit it from here.
+OPENCLAW_ENV="$CONFIG_DIR/openclaw.env"
+if [ ! -f "$OPENCLAW_ENV" ]; then
+  TOKEN="$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  cat > "$OPENCLAW_ENV" <<EOF
+# OpenClaw gateway. Edit and: systemctl restart openclaw-gateway
+# Shared secret for the Control UI and CLI clients (gateway.auth.token):
+#   sudo grep OPENCLAW_GATEWAY_TOKEN $CONFIG_DIR/openclaw.env
+OPENCLAW_GATEWAY_TOKEN=$TOKEN
+PORT=18789
+# Keep the loopback default and reach the UI with an SSH tunnel or Tailscale Serve.
+# Bind/auth/provider/model: ~/.openclaw/openclaw.json — see docs/11-openclaw.md
+EOF
+  echo "wrote $OPENCLAW_ENV"
+else
+  echo "$OPENCLAW_ENV exists, left untouched"
+fi
+
 chown "$TARGET_USER:$TARGET_USER" "$CONFIG_DIR"/*.env
 chmod 600 "$CONFIG_DIR"/*.env
 
+# ---- openclaw binary --------------------------------------------------------
+# npm's global bin directory is not on systemd's default PATH, so the unit needs the
+# absolute path substituted. A login shell also covers nvm/volta installations.
+OPENCLAW_BIN="$(sudo -u "$TARGET_USER" bash -lc 'command -v openclaw' 2>/dev/null || true)"
+if [ -z "$OPENCLAW_BIN" ] && [ -x /usr/local/bin/openclaw ]; then
+  OPENCLAW_BIN=/usr/local/bin/openclaw
+fi
+
 # ---- render units -----------------------------------------------------------
 say "Installing units into $UNIT_DIR"
-for unit in llama-server llama-router comfyui ai-discord-bot; do
+for unit in llama-server llama-router comfyui ai-discord-bot openclaw-gateway; do
+  if [ "$unit" = openclaw-gateway ] && [ -z "$OPENCLAW_BIN" ]; then
+    echo "skipped openclaw-gateway: openclaw not installed (scripts/60-install-openclaw.sh)"
+    continue
+  fi
   src="$REPO/systemd/${unit}.service"
   [ -f "$src" ] || die "missing $src"
   sed -e "s|__USER__|$TARGET_USER|g" \
@@ -114,6 +146,7 @@ for unit in llama-server llama-router comfyui ai-discord-bot; do
       -e "s|__AI_HOME__|$AI_HOME|g" \
       -e "s|__REPO__|$REPO|g" \
       -e "s|__CONFIG_DIR__|$CONFIG_DIR|g" \
+      -e "s|__OPENCLAW_BIN__|$OPENCLAW_BIN|g" \
       "$src" > "$UNIT_DIR/${unit}.service"
   echo "installed $UNIT_DIR/${unit}.service"
 done
@@ -142,16 +175,27 @@ else
   echo "skipped ai-discord-bot: set DISCORD_TOKEN in $REPO/.env first"
 fi
 
+if [ -z "$OPENCLAW_BIN" ]; then
+  echo "skipped openclaw-gateway: not installed (scripts/60-install-openclaw.sh, docs/11)"
+elif [ -f "$TARGET_HOME/.openclaw/openclaw.json" ]; then
+  systemctl enable openclaw-gateway.service
+  systemctl restart openclaw-gateway.service || true
+  echo "openclaw-gateway enabled (Control UI on 127.0.0.1:18789, token in openclaw.env)"
+else
+  echo "skipped openclaw-gateway: installed but not onboarded — run: openclaw onboard"
+fi
+
 cat <<EOF
 
 Status:
-  systemctl status llama-server comfyui ai-discord-bot --no-pager
+  systemctl status llama-server comfyui ai-discord-bot openclaw-gateway --no-pager
   journalctl -u llama-server -f
 
 Endpoints:
   http://127.0.0.1:8080/health        llama.cpp
   http://127.0.0.1:8080               llama.cpp chat UI (MCP tools), over the SSH tunnel
   http://127.0.0.1:8188               ComfyUI
+  http://127.0.0.1:18789              OpenClaw Control UI (token in openclaw.env)
 
 Multi-model (every GGUF in $AI_HOME/models, one port):
   sudo systemctl disable --now llama-server

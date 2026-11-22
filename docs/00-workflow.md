@@ -2,7 +2,7 @@
 
 Every script in this repo, in the order they run, with the command that proves each one
 worked. Prose, background and the "why" live in [01](01-hardware-and-bios.md) through
-[10](10-webui-and-models.md); this page is the path only.
+[11](11-openclaw.md); this page is the path only.
 
 Assumes the box is `ai-box`, the user `ai-user`, the repo cloned to `~/ai-box`, and
 `~/ai/models` for GGUFs. `sudo` is needed by exactly three scripts: `10`, `50`, `80`.
@@ -20,6 +20,7 @@ Assumes the box is `ai-box`, the user `ai-user`, the repo cloned to `~/ai-box`, 
 | 8 | MCP | `mcp.json` + one flag | `curl -s localhost:8080/tools` |
 | 9 | LAN | `sudo ./scripts/80-lan-access.sh` | a browser through Caddy |
 | 10 | Bench | `./scripts/90-bench.sh` | `bench/YYYY-MM-DD.md` |
+| 11 | OpenClaw | `./scripts/60-install-openclaw.sh` | a message in Telegram |
 
 ---
 
@@ -202,6 +203,37 @@ sudo systemctl stop llama-server          # it already holds the model in GTT
 
 Results append to `bench/YYYY-MM-DD.md`. Then `sudo systemctl start llama-server`.
 
+## 10. OpenClaw — chat from anywhere (20 min, optional)
+
+On the box you already have; this adds a gateway, not a model.
+
+```bash
+./scripts/60-install-openclaw.sh          # npm install + provider patch. No sudo.
+openclaw onboard                          # "Existing llama-server" -> http://127.0.0.1:8080/v1
+openclaw config patch --file ~/.config/ai-box/openclaw-provider.patch.json5
+openclaw models set llama-cpp/local       # `local` is --alias in llama-server.env
+openclaw channels add --channel telegram  # long polling: no ports, no DNS
+sudo ./scripts/50-install-services.sh     # openclaw-gateway.service
+journalctl -u openclaw-gateway -f
+```
+
+Model id check before onboarding — `/v1/models` answers with the alias:
+
+```bash
+curl -s localhost:8080/v1/models | jq -r '.data[].id'
+curl -s localhost:8080/health                 # must be {"status":"ok"}, not 503
+```
+
+Two things the wizard will not infer for you: **`contextWindow: 65536`** (each request gets
+64k here, not the 128k OpenClaw assumes) and a **300 s provider timeout** for local prefill.
+Both are in the patch file printed above. Do not choose "Managed local server" in onboarding,
+and do not run `--install-daemon` — the repo's unit replaces it.
+
+Reaching the Control UI: `ssh -N -L 18789:127.0.0.1:18789 ai-user@ai-box`, then
+`http://127.0.0.1:18789` with the token from `~/.config/ai-box/openclaw.env`. The chat channel
+is the point, though — it needs no tunnel at all. Security model before you connect one:
+[11](11-openclaw.md#security-this-is-an-agent-not-a-chat-ui).
+
 ---
 
 ## Router mode — several GGUFs, one port
@@ -230,6 +262,8 @@ once. Model names are the `.gguf` file names. [10](10-webui-and-models.md#model-
 - [ ] `curl localhost:8080/tools` lists `comfyui_generate_image`
 - [ ] `80-lan-access.sh` only if you want off-box access, and only with loopback LLM
 - [ ] `90-bench.sh` numbers recorded in `bench/`
+- [ ] `openclaw models list --provider llama-cpp` shows the model (after onboarding)
+- [ ] A message in the chosen chat channel gets an answer
 
 ## When a step fails
 
