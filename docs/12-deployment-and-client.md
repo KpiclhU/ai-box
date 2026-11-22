@@ -15,7 +15,7 @@ Proxmox host, and up to five people with Windows PCs — what do they run, and w
 | GPU stack | **`ai-box` owns it.** `llama-server` + ComfyUI. LU is superseded and not installed |
 | Chat ↔ images | **Both**: inline "draw this" in a conversation, plus the Images workspace |
 | Caddy | VM on the Proxmox host, **192.168.150.13**, publishing **`https://ai.pilchlab.ca`** |
-| Exposure | **LAN only** (`remote_ip` allowlist). Remote access later; no port-forwarding |
+| Exposure | **LAN only** (ufw allows the Caddy VM only). Remote access later; no port-forwarding |
 | Identity | **Up to 5 people**, separate Open WebUI accounts created by the admin |
 | Install method | **Native** (`uv` + systemd), no Docker on the box |
 | Image models | **SDXL** default, **Flux.1-schnell** as the second workflow (one active at a time) |
@@ -60,7 +60,7 @@ people can reach it.
         │  https://ai.pilchlab.ca
         ▼
   Caddy VM  192.168.150.13   (Proxmox)
-        │  tls internal + remote_ip allowlist
+        │  tls internal
         ▼
   192.168.150.40:3000   ai-box (Ubuntu 26.04)
   ┌──────────────────────────────────────────┐
@@ -185,13 +185,9 @@ which is why the files ship in `workflows/` rather than inlined into the env fil
 ai.pilchlab.ca {
 	tls internal
 
-	@lan remote_ip 192.168.0.0/16 10.0.0.0/8 172.16.0.0/12
-	handle @lan {
-		reverse_proxy 192.168.150.40:3000 {
-			flush_interval -1
-		}
+	reverse_proxy 192.168.150.40:3000 {
+		flush_interval -1
 	}
-	respond "Not on this network." 403
 }
 ```
 
@@ -213,9 +209,9 @@ import /etc/caddy/caddy-ai-box.caddy
 
   If you later have a public DNS name with DNS-01 (or a tunnel), `81-front-door.sh --tls acme`
   emits the ACME variant instead.
-- **No `basic_auth`.** Open WebUI's accounts are the login; a shared password in front would be
-  a second credential per person with no extra protection. `remote_ip` is the cheap network
-  gate that survives a misconfigured signup setting.
+- **No `basic_auth`, no IP allowlist.** Open WebUI's accounts are the login; a shared password
+  would be a second credential per person with no extra protection, and the ufw rule on ai-box
+  already limits `:3000` to the Caddy VM.
 - **The firewall is a precondition, not a follow-up.** `81` writes the ufw rule before it touches
   `HOST`, so `:3000` is never on the LAN unguarded — not even between two of its own steps. On a
   box where ufw is still inactive (Ubuntu's default) the first run stops with `HOST=127.0.0.1` and
@@ -230,7 +226,7 @@ import /etc/caddy/caddy-ai-box.caddy
 
 | Option | Shape |
 |---|---|
-| **Tailscale** (recommended) | `tailscale serve` on the VM, or Caddy listening on the tailnet only; `remote_ip` becomes the tailnet CIDR |
+| **Tailscale** (recommended) | `tailscale serve` on the VM, or Caddy listening on the tailnet only; the ufw rule's source becomes the tailnet CIDR |
 | **Cloudflare Tunnel** | `cloudflared` on the VM, Cloudflare Access in front. No inbound port, but the login page is public |
 
 Turn on MFA for admin accounts before the first remote session.

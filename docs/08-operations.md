@@ -177,8 +177,7 @@ Things that indicate trouble before they indicate failure:
 ## Security posture
 
 - **One published surface:** `:3000` (wildcard bind, because Caddy is on another host) → ufw
-  allows only the Caddy VM, then Caddy's LAN allowlist, then the Open WebUI login. Nothing else
-  leaves the box.
+  allows only the Caddy VM, then the Open WebUI login. Nothing else leaves the box.
 - **ComfyUI has no authentication.** It stays on loopback; the node editor is reached over an
   SSH tunnel. Never add it to the Caddy site.
 - **`llama-server` has no authentication either**, and with `--tools` it is remote command

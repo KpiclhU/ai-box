@@ -52,7 +52,7 @@ It does **not** fit `gpt-oss-120b` (~59 GB of weights). Don't plan around it.
 | LLM runtime | **llama.cpp `llama-server` (HIP/ROCm build)** | Best prompt-processing speed for agentic coding; one toolchain shared with ComfyUI. Vulkan build documented as the alternative for higher decode tok/s |
 | Image stack | **ComfyUI in a venv**, PyTorch ROCm wheels | Most reliable path on `gfx1151`; scriptable over HTTP for the bot |
 | Chat + images UI | **Open WebUI**, native `uv` install on `:3000`, reachable only from the Caddy VM | Per-user accounts and history, ComfyUI generation in chat and in an Images workspace, one process, no GPU |
-| Published surface | **Caddy** on a Proxmox VM (`192.168.150.13`), `https://ai.pilchlab.ca` | TLS, a LAN allowlist and one site block; everything else stays on loopback |
+| Published surface | **Caddy** on a Proxmox VM (`192.168.150.13`), `https://ai.pilchlab.ca` | TLS and one site block; everything else stays on loopback |
 | Orchestration | systemd user-agnostic system units | Starts on boot, restarts on failure, no Docker-in-a-VM problems |
 
 Explicitly **not** used: Ollama/LM Studio as the primary runtime (fine for experiments, less

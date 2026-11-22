@@ -236,13 +236,10 @@ fi
 
 # ---- Caddy snippet ----------------------------------------------------------
 if [ "$TLS_MODE" = internal ]; then
-  TLS_BLOCK='	# The Caddy VM has a private address, so a public ACME challenge cannot reach it.
-	# This is Caddy'"'"'s local CA: trust its root on every Windows PC (step 2 below).
+  TLS_BLOCK='	# Private address, so ACME cannot reach it: Caddy'"'"'s local CA (step 2 below).
 	tls internal'
 else
-  TLS_BLOCK='	# Requires DNS-01 (a caddy-dns provider module) or a publicly reachable
-	# 80/443. With only HTTP-01 and a private address, validation will fail and
-	# the site falls back to no certificate.
+  TLS_BLOCK='	# Needs DNS-01 or a publicly reachable 80/443.
 	tls {
 		# dns <provider> <token>
 	}'
@@ -256,15 +253,9 @@ render_snippet() {
 $HOSTNAME_ {
 $TLS_BLOCK
 
-	# Household only. This is the cheap gate in front of Open WebUI's own login;
-	# it survives a misconfigured ENABLE_SIGNUP.
-	@lan remote_ip 192.168.0.0/16 10.0.0.0/8 172.16.0.0/12
-	handle @lan {
-		reverse_proxy $AI_IP:$WEB_PORT {
-			flush_interval -1
-		}
+	reverse_proxy $AI_IP:$WEB_PORT {
+		flush_interval -1
 	}
-	respond "Not on this network." 403
 }
 EOF
 }
