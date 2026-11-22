@@ -12,7 +12,7 @@ Proxmox host, and up to five people with Windows PCs — what do they run, and w
 | Question | Decision |
 |---|---|
 | Windows client | **Open WebUI** — open source, per-user accounts, ComfyUI image generation. Installed as a PWA/app window; no bespoke client |
-| GPU stack | **`ai-box` owns it.** `llama-server` + ComfyUI. LU ([`lu-box/`](../lu-box/README.md)) is superseded and not installed |
+| GPU stack | **`ai-box` owns it.** `llama-server` + ComfyUI. LU is superseded and not installed |
 | Chat ↔ images | **Both**: inline "draw this" in a conversation, plus the Images workspace |
 | Caddy | VM on the Proxmox host, **192.168.150.13**, publishing **`https://ai.pilchlab.ca`** |
 | Exposure | **LAN only** (`remote_ip` allowlist). Remote access later; no port-forwarding |

@@ -26,6 +26,9 @@ build-vulkan/
 comfyui/
 llama.cpp/
 
+# superseded work, kept on disk only — lu-box/ is its own git repository
+lu-box/
+
 # editors / os
 .vscode/
 .idea/
