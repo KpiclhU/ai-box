@@ -29,6 +29,10 @@ llama.cpp/
 # superseded work, kept on disk only — lu-box/ is its own git repository
 lu-box/
 
+# sibling repositories, each its own git repository
+ai-box-autoinstall/
+ai-box-docker/
+
 # editors / os
 .vscode/
 .idea/

@@ -185,12 +185,11 @@ GET  /queue             -> pending/running counts
 POST /free {"unload_models":true,"free_memory":true}
 ```
 
-`workflows/openwebui-sdxl.api.json` is a working API-format graph. The CLI scripts
-**resolve nodes by class type** rather than hard-coded ids: they find the `KSampler`, follow
-its `positive` link to the text node, set the prompt, set `seed`/`steps`/`cfg`, and follow
-`latent_image` to set width/height. That means the graph still works if you re-export it from
-a different workflow. Open WebUI does the same job through an explicit node map, because it
-only needs to target the fields it exposes ([12](12-deployment-and-client.md#sdxl-the-default)).
+The CLI scripts **resolve nodes by class type** rather than hard-coded ids: they find the
+`KSampler`, follow its `positive` link to the text node, set the prompt, set `seed`/`steps`/`cfg`,
+and follow `latent_image` to set width/height. That means any API-format graph works, including
+one you re-export from the editor. The SDXL and Flux graphs this repo used to ship now live in
+the `ai-box-docker` repository, next to the chat client that imports them.
 
 Two API gotchas worth knowing:
 
@@ -201,10 +200,9 @@ Two API gotchas worth knowing:
 
 ## Getting an image out of the chat window
 
-**The default is Open WebUI**, which drives ComfyUI directly: the Image toggle in a
-conversation and the Images workspace both queue the workflow and render the result. That is
-what household accounts use, and it needs no tools on `llama-server` at all
-([12](12-deployment-and-client.md#4-images-through-open-webui)).
+**The chat client is elsewhere.** Open WebUI runs on the `ai-box-docker` VM and drives ComfyUI
+over the LAN: its Image toggle queues a graph and renders the result, and it needs no tools on
+`llama-server` at all. `http://192.168.150.40:8188` is everything it wants from this box.
 
 The rest of this section is the **admin path** — llama.cpp's own Llama Chat, which
 **cannot generate images by itself**. The server has no image-generation tool and no
@@ -228,8 +226,10 @@ chmod +x ~/ai-box/scripts/comfy-mcp.py
 sudo systemctl restart llama-router && curl -s localhost:8080/tools
 ```
 
-Setup detail, the router gotchas and the timeouts:
-[10-webui-and-models.md](10-webui-and-models.md#comfyui-let-the-router-draw).
+`mcp.example.json` in this repo has a ready `comfyui` entry. Add the
+`--mcp-servers-config` flag to `LLAMA_EXTRA_ARGS`, restart the unit, and check
+`curl -s localhost:8080/tools`. Keep the client timeout generous: the first image loads
+weights, so 60 seconds is too short and 15 minutes is not.
 
 **2. Let the model run the CLI.** Give the server the shell tool, and `97-comfy-gen.sh` becomes
 the model's "draw" action:
@@ -248,14 +248,14 @@ Then in the chat: *“generate an image of a corgi astronaut by running
 /home/ai-user/ai-box/scripts/97-comfy-gen.sh with your prompt”*. The model calls the tool, the
 script queues the graph on ComfyUI, and the reply carries the PNG path. Options: `-n` negative
 prompt, `-W`/`-H` (rounded to multiples of 8), `--steps`, `-c` cfg, `--seed`, `-m` checkpoint,
-`-o` output dir. It uses `COMFY_WORKFLOW` (default `workflows/openwebui-sdxl.api.json`) and resolves
-nodes by class type, so a re-exported graph still works.
+`-o` output dir. It uses `COMFY_WORKFLOW` (default `workflows/sdxl.api.json`) and resolves nodes
+by class type, so a re-exported graph still works.
 
-**3. Use Open WebUI** (the default, above). Its *Image Generation* supports ComfyUI
-directly: admin → Settings → Images → engine `ComfyUI`, base URL `http://127.0.0.1:8188`,
-and an **API-format** workflow (ComfyUI: gear → *Enable Dev mode Options* → *Save (API Format)*),
-with node ids mapped for prompt, model, size, steps and seed. `workflows/` already contains
-two such graphs.
+**3. Point a chat UI at it.** Open WebUI on the `ai-box-docker` VM has *Image Generation*
+built in: admin → Settings → Images → engine `ComfyUI`, base URL `http://192.168.150.40:8188`,
+and an **API-format** workflow (ComfyUI: gear → *Enable Dev mode Options* → *Save (API
+Format)*) with node ids mapped for prompt, model, size, steps and seed. Nothing in this repo
+installs it, and the graph it imports ships with that repository.
 
 Either way the generation competes with the LLM for GTT: unload the model first (router UI →
 **Models** → unload, or `POST /models/unload`) if a Flux job needs the room, and keep SDXL

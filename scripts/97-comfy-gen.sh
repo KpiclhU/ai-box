@@ -10,13 +10,13 @@
 #   LLAMA_EXTRA_ARGS="... --tools exec_shell_command"
 # the model can run this script, and the chat shows the PNG path it prints.
 #
-# Workflow: workflows/openwebui-sdxl.api.json, nodes found by class type (not hard-coded ids).
+# Workflow: workflows/sdxl.api.json, nodes found by class type (not hard-coded ids).
 set -euo pipefail
 
 AI_HOME="${AI_HOME:-$HOME/ai}"
 COMFY="${COMFYUI_DIR:-$AI_HOME/comfyui}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-WORKFLOW="${COMFY_WORKFLOW:-$REPO/workflows/openwebui-sdxl.api.json}"
+WORKFLOW="${COMFY_WORKFLOW:-$REPO/workflows/sdxl.api.json}"
 BASE="${COMFY_URL:-http://127.0.0.1:8188}"
 OUT="${COMFY_OUT:-$AI_HOME/images}"
 

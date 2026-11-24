@@ -229,59 +229,41 @@ Framework firmware issue linked to **large custom iGPU memory carve-outs**. Set 
 iGPU Memory Size back to 512 MB / Auto and rely on GTT instead
 ([03-gpu-memory.md](03-gpu-memory.md)). Also check the BIOS is ≥ 3.06.
 
-## Caddy answers 502 for ai.pilchlab.ca
+## Another machine on the LAN cannot reach llama-server or ComfyUI
 
-The VM reached nothing on the box. In order:
+`80-lan-access.sh` leaves both on `127.0.0.1` **on purpose** when no default-deny firewall
+covers them, and exits non-zero with the commands that fix it. Look for `Nothing was
+published` in its output before anything else.
 
 ```bash
 # on the box
-ss -ltnp | grep ':3000'                     # want 0.0.0.0:3000 (or *:3000), not nothing
-systemctl status open-webui --no-pager
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/
-# from the Caddy VM
-curl -sS -o /dev/null -w '%{http_code}\n' http://192.168.150.40:3000/
+ss -ltnp | grep -E ':(8080|8188)\b'          # want 0.0.0.0 on both
+ufw status verbose                           # Status: active, Default: deny (incoming)
+sudo ufw status | grep -E '(8080|8188)/tcp'  # each rule should name 192.168.150.0/24
+# from the other machine
+curl -sS -o /dev/null -w '%{http_code}\n' http://192.168.150.40:8080/health
 ```
 
-- `connection refused` from the VM: Open WebUI is down, the ufw rule is missing, or the env still
-  says `HOST=127.0.0.1`. `81-front-door.sh` leaves it on loopback **on purpose** when no
-  default-deny firewall covers `:3000` — look for `Nothing was published` in its output, then
-  `sudo ufw allow OpenSSH && sudo ufw default deny incoming && sudo ufw enable` and run it again.
-- `0.0.0.0:3000` but a laptop that is not the Caddy VM can still open it: ufw's default incoming
-  policy is allow, so the `from` rule restricts nothing. `ufw status verbose` shows it; fix with
-  `sudo ufw default deny incoming`.
-- Timeout from the VM but 200 on the box: a firewall in between — check the Proxmox VM's own
-  rules, not just the box's.
-- 502 only after a reboot: `open-webui` failed to start; `journalctl -u open-webui -n 50`.
+- `connection refused` from another host: the service is down, the ufw rule is missing, or the
+  env file still says `HOST=127.0.0.1` and nothing has restarted it. `ss` shows the truth; the
+  env file is only a wish until the unit restarts.
+- Reachable from a device **outside** the subnet: ufw's default incoming policy is `allow`, so
+  the `from` rule restricts nothing. `sudo ufw default deny incoming` is the fix, and
+  `80-lan-access.sh` will not bind in that state.
+- Timeout from one host and not another: that host is on a different VLAN or subnet. The rule
+  is a subnet match, so it is doing exactly what it was told.
+- Works on the box, refused from the LAN, with the rules in place: check the Proxmox host's
+  own firewall rules if the box is a VM, then the switch — a VLAN ACL between the two hosts
+  looks identical from here.
 
-## The browser warns about the certificate
-
-Expected until Caddy's local CA is trusted on that PC. Export it from the VM and install it:
-
-```bash
-sudo cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt > root.crt
-certutil -addstore -f Root root.crt      # Windows, Administrator prompt
-```
-
-Do not click through the warning instead — it hides the day a real certificate breaks.
-
-## Open WebUI loads, but there are no models
-
-- The connection is **Settings → Admin → Connections → OpenAI-compatible**, base URL
-  `http://127.0.0.1:8080/v1`. Not `https`, not a trailing path.
-- `curl -s localhost:8080/health` — `503` means the model is still loading, and the model list
-  is empty until it is `ok`.
-- In router mode the id is the `.gguf` file name; the connection lists whatever
-  `/v1/models` reports, so refresh it after a swap.
-
-## Open WebUI: image generation fails
+## ComfyUI answers but no picture comes back
 
 | Message / symptom | Cause |
 |---|---|
-| `Invalid workflow` on import | the UI-format file, not the API-format one. Re-export with *Save (API Format)* |
-| Nothing happens when you send | the **Image** toggle is off in the message bar's Integrations menu, or the model lacks the Image Generation capability (*Workspace → Models → Edit*) |
+| `Invalid workflow` on import | the UI-format graph, not the API-format one. Re-export with *Save (API Format)* |
 | Error from ComfyUI in the log | the checkpoint name in the workflow does not exist in `comfyui/models/checkpoints`, or a Flux component file is missing |
-| Generation succeeds, picture never appears | Caddy is buffering: the site block needs `flush_interval -1` |
 | Very slow first image | ComfyUI is loading weights, and possibly evicting the LLM. Wait; then unload the model for Flux jobs |
+| Generation succeeds, the client shows nothing | the client timed out fetching `/view`. The image is in `~/ai/comfyui/output/` — check there before debugging the graph |
 
 ## `fwupdmgr` finds nothing
 

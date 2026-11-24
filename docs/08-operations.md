@@ -2,25 +2,28 @@
 
 ## Services
 
-Four units, all installed by `scripts/50-install-services.sh`:
+Three units, all installed by `scripts/50-install-services.sh`:
 
 | Unit | Port | Depends on |
 |---|---|---|
-| `llama-server.service` | 127.0.0.1:8080 | `MODEL=` in the env file |
-| `llama-router.service` | 127.0.0.1:8080 | every GGUF in `MODELS_DIR`; `Conflicts=` llama-server |
-| `comfyui.service` | 127.0.0.1:8188 | `~/ai/comfyui/.venv` |
-| `open-webui.service` | 127.0.0.1:3000 until `81-front-door.sh`; then 0.0.0.0:3000 (ufw: Caddy VM only) | `~/ai/openwebui/venv`, `~/ai/data/openwebui` |
+| `llama-server.service` | loopback, then `0.0.0.0:8080` behind the ufw subnet rule | `MODEL=` in the env file |
+| `llama-router.service` | the same port — the two are alternatives | every GGUF in `MODELS_DIR`; `Conflicts=` llama-server |
+| `comfyui.service` | loopback, then `0.0.0.0:8188` behind the same rule | `~/ai/comfyui/.venv` |
+
+The `0.0.0.0` half is `scripts/80-lan-access.sh`, which puts the firewall rule in first and
+only then moves the bind. Until it has run, both services are loopback-only and a client on
+another machine gets nothing — that is the default, not a fault.
 
 ```bash
-sudo systemctl status llama-server comfyui open-webui
+sudo systemctl status llama-server comfyui
 sudo systemctl restart comfyui
 journalctl -u llama-server -f
-journalctl -u open-webui -n 100 --no-pager
+journalctl -u comfyui -n 100 --no-pager
 ```
 
-All four are `WantedBy=multi-user.target`, so the box comes back as an appliance after a power
-cut. `open-webui` deliberately does **not** depend on `llama-server`: it starts fine while the
-model is loading, and `llama-server`/`llama-router` conflict with each other.
+All three are `WantedBy=multi-user.target`, so the box comes back as an appliance after a power
+cut. `llama-server` and `llama-router` conflict with each other on purpose: one port, one
+process.
 
 Configuration lives in environment files, not in the units:
 
@@ -28,9 +31,6 @@ Configuration lives in environment files, not in the units:
 ~/.config/ai-box/llama-server.env     MODEL=..., HOST, PORT, LLAMA_EXTRA_ARGS=...
 ~/.config/ai-box/llama-router.env     MODELS_DIR, MODELS_MAX, HOST, PORT, LLAMA_EXTRA_ARGS=...
 ~/.config/ai-box/comfyui.env          HOST, PORT, COMFY_EXTRA_ARGS=...
-~/.config/ai-box/openwebui.env        HOST, PORT, WEBUI_SECRET_KEY, WEBUI_URL, DATA_DIR,
-                                      WEBUI_ADMIN_*, ENABLE_IMAGE_GENERATION,
-                                      COMFYUI_BASE_URL, COMFYUI_WORKFLOW(_NODES)
 ```
 
 To change models, edit `MODEL=` (an absolute path, no spaces) and
@@ -45,20 +45,21 @@ unit's `ExecStart` are expanded, which is why `MODEL` is referenced there.
 Editing a unit file means editing `systemd/*.service` in the repo and re-running the install
 script, so the repo stays the source of truth.
 
-## Accounts
+## Access
 
-Open WebUI is the only place identity exists. `50-install-services.sh` writes a generated
-`WEBUI_ADMIN_EMAIL` / `WEBUI_ADMIN_PASSWORD`, and Open WebUI creates that account at startup
-while `ENABLE_SIGNUP=false` — no sign-up page and no dependence on the recent first-user
-exemption. The password line is deleted from `openwebui.env` once the account exists. Create
-people under *Admin → Users*, and grant image generation through a group rather than by making
-everyone an admin.
+Nothing on this box has accounts. `llama-server` and ComfyUI are raw HTTP APIs, and the only
+thing between them and the network is `ufw allow from 192.168.150.0/24`:
 
-- Lost admin password: there is no CLI reset. Restore `~/ai/data/openwebui/webui.db` from
-  backup, or delete the database, put `WEBUI_ADMIN_EMAIL` / `WEBUI_ADMIN_PASSWORD` back into
-  `openwebui.env`, and restart.
-- To remove someone: *Admin → Users → delete*. Their chats go with the account.
-- `WEBUI_SECRET_KEY` must not change casually — it invalidates every session.
+- Everyone on that subnet can use the model and drive ComfyUI — including a guest who joins
+  the Wi-Fi. That is the trade for having no login to maintain. Keep the guest network on a
+  different subnet, or accept it.
+- **Never port-forward 8080 or 8188** on the router. The subnet rule is the whole control.
+- `--tools` on `llama-server` turns "use the model" into "run commands as the service user" for
+  every one of those clients. Leave it off unless that is what you want.
+- Rotating access means changing the subnet argument, not a password:
+  `sudo ./scripts/80-lan-access.sh --revert`, edit `ufw allow from …`, re-run.
+- Chat history, per-person accounts and the image workspace belong to the Open WebUI on the
+  `ai-box-docker` VM, which reaches this box over the LAN like any other client.
 
 ## Power profile
 
@@ -83,7 +84,6 @@ The machine has 64 GB total. Everything shares it:
 | `llama-server` with a 30B Q6_K at 64k/slot (131072 total) | 25 GB weights + 6 GB KV + ~2 GB compute |
 | ComfyUI idle | ~2 GB |
 | ComfyUI running Flux fp16 | 30–34 GB peak |
-| Open WebUI | 1–2 GB (ordinary RAM) |
 | Page cache for model files | whatever is left (good, it speeds reloads) |
 
 Rules:
@@ -97,18 +97,18 @@ Rules:
 
 ## Coexistence: images while chatting
 
-ComfyUI and llama.cpp both allocate from the same GTT pool. Open WebUI queues image jobs per
-request; it does **not** unload the LLM for you.
+ComfyUI and llama.cpp both allocate from the same GTT pool, and nothing coordinates them: a
+chat client queuing an image job does not unload the LLM for you.
 
 - LLM slots: 2 (continuous batching). Image slot: 1 — ComfyUI runs one graph at a time.
-- People sharing five accounts share that one queue; expect waits, not failures.
+- Every client shares that one ComfyUI queue; expect waits, not failures.
 - After each image batch, `POST /free {"unload_models": true, "free_memory": true}` so the
   caching allocator does not hold memory between jobs. This alone fixes a measured ~2.4×
   slowdown on consecutive runs. `scripts/96-comfy-models.sh free` does it from the shell.
 
 ## Updates
 
-Order matters: kernel/firmware → ROCm → torch → ComfyUI → Open WebUI → llama.cpp.
+Order matters: kernel/firmware → ROCm → torch → ComfyUI → llama.cpp.
 
 ```bash
 # monthly, roughly
@@ -119,16 +119,11 @@ cd ~/ai/llama.cpp && git pull && cmake --build build -j"$(nproc)" && sudo system
 # ComfyUI: use ComfyUI-Manager, or
 cd ~/ai/comfyui && git pull && . .venv/bin/activate && pip install -r requirements.txt
 sudo systemctl restart comfyui
-
-# Open WebUI: stop it first so the SQLite schema is not migrated under a live process
-sudo systemctl stop open-webui
-sudo -u "$USER" ~/ai/openwebui/venv/bin/pip install --upgrade open-webui
-sudo systemctl start open-webui
 ```
 
 Do **not** blindly `pip install -U torch` in the ComfyUI venv — that is how the
 torch/torchvision ABI mismatch happens. Pin with `constraints.txt` once you have a working
-set. Read Open WebUI's release notes before a jump: a migration is one-way for the DB.
+set.
 
 Keep the previous `llama.cpp` build directory until the new one is benchmarked; a regression
 in a nightly is a 20-minute rollback (`git checkout <old-sha>` + rebuild) rather than a
@@ -139,21 +134,18 @@ mystery.
 Worth keeping:
 
 ```
-~/.config/ai-box/             # service env files, Caddy snippet
-~/ai/data/openwebui/          # users, chats, uploaded files, settings
+~/.config/ai-box/             # service env files
 ~/ai/comfyui/custom_nodes/    # anything you cloned
 ~/ai/comfyui/user/            # saved workflows
+~/ai/comfyui/output/          # generated images, if you care about them
 ```
 
 Not worth backing up: GGUF/checkpoints (re-downloadable), venvs, `build/` directories.
 
 ```bash
 tar czf ~/ai-box-config-$(date +%F).tgz \
-  ~/.config/ai-box ~/ai/data/openwebui ~/ai/comfyui/user ./systemd
+  ~/.config/ai-box ~/ai/comfyui/user ./systemd
 ```
-
-The Open WebUI data directory contains password hashes and per-user history: treat the archive
-as a secret (`chmod 600`).
 
 ## Monitoring
 
@@ -171,19 +163,15 @@ Things that indicate trouble before they indicate failure:
   for that model + context.
 - GPU at 100 % but no progress and no log output → the IRQ-stall bug; see
   [09-troubleshooting.md](09-troubleshooting.md).
-- `open-webui` restarting repeatedly → usually a data-directory permission problem
-  (`~/ai/data/openwebui` must be owned by the service user) or a failed DB migration.
 
 ## Security posture
 
-- **One published surface:** `:3000` (wildcard bind, because Caddy is on another host) → ufw
-  allows only the Caddy VM, then the Open WebUI login. Nothing else leaves the box.
-- **ComfyUI has no authentication.** It stays on loopback; the node editor is reached over an
-  SSH tunnel. Never add it to the Caddy site.
-- **`llama-server` has no authentication either**, and with `--tools` it is remote command
-  execution. Keep `--tools` off; Open WebUI draws through ComfyUI without it.
-- **`WEBUI_SECRET_KEY` and the Open WebUI DB are secrets.** The DB holds password hashes;
-  the env file is `chmod 600`.
-- **Per-person accounts, not a shared login.** That is what makes history, permissions and an
-  audit trail possible at all.
-- No telemetry leaves the box (`ENABLE_VERSION_UPDATE_CHECK=false`).
+- **The subnet is the boundary.** Two ports, `8080` and `8188`, `allow from
+  192.168.150.0/24`, incoming denied by default, and nothing port-forwarded upstream.
+- **Neither service has authentication.** Not a missing feature — fits the same sentence as
+  above, and the reason `80-lan-access.sh` refuses to bind before the firewall covers it.
+- **`--tools` is remote command execution** for anyone on the subnet. Off by default; keep it
+  that way.
+- **The services run as your user.** Anything that reaches them reaches that account's files
+  only through a llama.cpp tool, so with `--tools` off the exposure is compute, not the disk.
+- No telemetry leaves the box.

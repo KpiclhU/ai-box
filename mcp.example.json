@@ -9,22 +9,6 @@
         "COMFY_URL": "http://127.0.0.1:8188"
       },
       "timeout_ms": 900000
-    },
-    "filesystem": {
-      "command": "/usr/bin/npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-filesystem",
-        "/home/ai-user/ai-box"
-      ]
-    },
-    "git": {
-      "command": "/usr/bin/uvx",
-      "args": [
-        "mcp-server-git",
-        "--repository",
-        "/home/ai-user/ai-box"
-      ]
     }
   }
 }

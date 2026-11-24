@@ -311,15 +311,11 @@ aider --openai-api-base http://127.0.0.1:8080/v1 --openai-api-key local \
 **Cline / Roo** (VS Code): provider "OpenAI Compatible", base URL
 `http://127.0.0.1:8080/v1`, model `coder`.
 
-**Open WebUI** for a browser chat UI (optional, Docker Engine not Desktop):
-
-```bash
-docker run -d --name open-webui -p 3000:8080 \
-  -e OPENAI_API_BASE_URL=http://host.docker.internal:8080/v1 \
-  -e OPENAI_API_KEY=local -v open-webui:/app/backend/data \
-  --add-host=host.docker.internal:host-gateway --restart unless-stopped \
-  ghcr.io/open-webui/open-webui:main
-```
+**A browser chat UI** lives on another machine: Open WebUI runs in Docker on the
+`ai-box-docker` VM and points at `http://192.168.150.40:8080/v1`. Nothing in this repo installs
+it, and this box has no Docker — the containers belong on the VM, which also runs Open
+Terminal and OpenClaw next to it. Editors on your own laptop use the same endpoint over the
+LAN once `scripts/80-lan-access.sh` has run ([00](00-workflow.md#6-lan-access-5-min)).
 
 ## Practical expectations
 
